@@ -1,4 +1,4 @@
-# SuperLogs
+# 💾 SuperLogs
 
 Version: 0.0.2
 
@@ -7,10 +7,12 @@ SuperLogs is a Python package that provides a flexible and powerful logging solu
 ## Features
 
 - Easy integration with Google Cloud Logging
+- Full support for GCP Logging severities
 - Support for local development and production environments
 - Automatic handling of large log messages via Google Cloud Storage
 - Custom log levels (ALERT, EMERGENCY)
 - Colorized console output for local development
+- Automatic capture of Instance ID, Trace ID, and Span ID for AppEngine, Cloud Run, and Cloud Functions services
 
 ## Installation
 
