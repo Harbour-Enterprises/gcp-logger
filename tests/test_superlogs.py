@@ -62,24 +62,39 @@ def test_save_large_log_to_gcs(mock_google_cloud, superlogs_instance):
 
 
 def test_google_cloud_log_sink(superlogs_instance):
+    class MockLevel:
+        name = "INFO"
+
+    class MockProcess:
+        id = 1
+
+    class MockThread:
+        id = 1
+
     mock_message = MagicMock()
     mock_message.record = {
-        "level": {"name": "INFO"},
+        "level": MockLevel(),
         "time": MagicMock(),
         "extra": {"instance_id": "test", "trace_id": "trace", "span_id": "span"},
-        "process": {"id": 1},
-        "thread": {"id": 1},
+        "process": MockProcess(),
+        "thread": MockThread(),
         "name": "test_logger",
         "function": "test_func",
         "line": 10,
         "message": "Test message",
     }
 
+    # Mock the cloud logger
+    mock_cloud_logger = MagicMock()
+    superlogs_instance.cloud_logger = mock_cloud_logger
+
     superlogs_instance.google_cloud_log_sink(mock_message)
 
-    superlogs_instance.cloud_logger.log_struct.assert_called_once()
-    log_entry = superlogs_instance.cloud_logger.log_struct.call_args[0][0]
+    mock_cloud_logger.log_struct.assert_called_once()
+    log_entry = mock_cloud_logger.log_struct.call_args[0][0]
+
     assert log_entry["level"] == "INFO"
+    assert log_entry["message"] == "test | trace | span | 1 | 1 | INFO     | test_logger:test_func:10 - Test message"
     assert "Test message" in log_entry["message"]
 
 

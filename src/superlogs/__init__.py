@@ -82,13 +82,27 @@ class SuperLogs:
     @staticmethod
     def google_cloud_log_format(record: dict) -> str:
         custom_format = (
-            "{extra[instance_id]} | {extra[trace_id]} | {extra[span_id]} | "
-            "{process[id]} | {thread[id]} | "  # Changed these lines
-            "{level[name]: <8} | "  # Changed this line
+            "{instance_id} | {trace_id} | {span_id} | "
+            "{process_id} | {thread_id} | "
+            "{level: <8} | "
             "{name}:{function}:{line} - "
             "{message}"
         )
-        return custom_format.format(**record)
+
+        formatted_record = {
+            "instance_id": record["extra"].get("instance_id", "-"),
+            "trace_id": record["extra"].get("trace_id", "-"),
+            "span_id": record["extra"].get("span_id", "-"),
+            "process_id": record["process"].id,
+            "thread_id": record["thread"].id,
+            "level": record["level"].name,
+            "name": record["name"],
+            "function": record["function"],
+            "line": record["line"],
+            "message": record["message"],
+        }
+
+        return custom_format.format(**formatted_record)
 
     @classmethod
     def google_cloud_log_truncate(cls, log_message: str, gsutil_uri: str | None) -> str:
@@ -136,14 +150,14 @@ class SuperLogs:
 
     def google_cloud_log_sink(self, message):
         record = message.record
-        log_level = record["level"]["name"]
+        log_level = record["level"].name
         severity = self.LOGURU_LEVEL_TO_GCP_SEVERITY.get(log_level, "DEFAULT")
         log_message = self.google_cloud_log_format(record)
         instance_id = record["extra"].get("instance_id", "-")
         trace_id = record["extra"].get("trace_id", "-")
         span_id = record["extra"].get("span_id", "-")
-        process_id = record["process"]["id"]
-        thread_id = record["thread"]["id"]
+        process_id = record["process"].id
+        thread_id = record["thread"].id
 
         if len(log_message.encode("utf-8")) > self.LOGGING_MAX_SIZE:
             gsutil_uri = self.save_large_log_to_gcs(
