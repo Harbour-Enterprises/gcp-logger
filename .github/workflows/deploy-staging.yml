@@ -35,7 +35,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
       - run: pip install -r requirements-test.txt
-      - run: pytest tests/ --cov=src --cov-report=xml
+      - run: pytest tests/
 
   build-and-publish-package:
     runs-on: ubuntu-latest
