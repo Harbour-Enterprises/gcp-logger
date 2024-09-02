@@ -35,7 +35,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
       - run: pip install -r requirements-test.txt -r requirements.txt
-      - run: pytest tests/
+      - run: python -m pytest tests/
 
   build-and-publish-package:
     runs-on: ubuntu-latest
