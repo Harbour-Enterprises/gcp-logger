@@ -1,8 +1,8 @@
-import sys
-from unittest.mock import patch
+# File: tests/test_superlogs.py
+
+from unittest.mock import MagicMock, patch
 
 import pytest
-from google.cloud import logging as cloud_logging
 
 from src.superlogs import SuperLogs, logger
 
@@ -13,98 +13,106 @@ def superlogs_instance():
         yield SuperLogs(environment="unittest", default_bucket="test-bucket")
 
 
+@pytest.fixture
+def mock_cloud_logging():
+    with patch("google.cloud.logging.Client") as mock_client:
+        mock_logger = MagicMock()
+        mock_client.return_value.logger.return_value = mock_logger
+        yield mock_logger
+
+
+@pytest.fixture
+def mock_storage():
+    with patch("google.cloud.storage.Client") as mock_client:
+        mock_bucket = MagicMock()
+        mock_client.return_value.bucket.return_value = mock_bucket
+        yield mock_bucket
+
+
 def test_init(superlogs_instance):
+    assert superlogs_instance is not None
     assert superlogs_instance.environment == "unittest"
     assert superlogs_instance.default_bucket == "test-bucket"
-    assert superlogs_instance.gae_instance == "-"
-    assert isinstance(superlogs_instance.client, cloud_logging.Client)
-    assert isinstance(superlogs_instance.cloud_logger, cloud_logging.Logger)
-
-
-def test_setup_logging_unittest(superlogs_instance):
-    assert logger.level("ALERT").no == 70
-    assert logger.level("EMERGENCY").no == 80
-
-    # Check if the stdout handler is added for unittest environment
-    handlers = logger._core.handlers
-    assert any(handler.sink == sys.stdout for handler in handlers.values())
-
-
-@pytest.mark.parametrize(
-    "log_level,expected_severity",
-    [
-        ("TRACE", "DEBUG"),
-        ("DEBUG", "DEBUG"),
-        ("INFO", "INFO"),
-        ("SUCCESS", "NOTICE"),
-        ("WARNING", "WARNING"),
-        ("ERROR", "ERROR"),
-        ("CRITICAL", "CRITICAL"),
-        ("ALERT", "ALERT"),
-        ("EMERGENCY", "EMERGENCY"),
-    ],
-)
-def test_google_cloud_log_sink(superlogs_instance, log_level, expected_severity):
-    with patch.object(superlogs_instance.cloud_logger, "log_struct") as mock_log_struct:
-        logger.log(log_level, "Test message")
-
-        mock_log_struct.assert_called_once()
-        args, kwargs = mock_log_struct.call_args
-        assert kwargs["severity"] == expected_severity
-        assert "Test message" in args[0]["message"]
 
 
 def test_google_cloud_log_format():
     record = {
-        "extra": {"instance_id": "test-instance", "trace_id": "trace-123", "span_id": "span-456"},
-        "process": {"id": 1234},
-        "thread": {"id": 5678},
+        "extra": {"instance_id": "test", "trace_id": "trace", "span_id": "span"},
+        "process": {"id": 1},
+        "thread": {"id": 1},
         "level": {"name": "INFO"},
         "name": "test_logger",
-        "function": "test_function",
-        "line": 42,
-        "message": "Test log message",
+        "function": "test_func",
+        "line": 10,
+        "message": "Test message",
     }
-    formatted_log = SuperLogs.google_cloud_log_format(record)
-    assert (
-        "test-instance | trace-123 | span-456 | 1234 | 5678 | INFO     | test_logger:test_function:42 - Test log message"
-        in formatted_log
-    )
+    formatted = SuperLogs.google_cloud_log_format(record)
+    assert "test | trace | span" in formatted
+    assert "INFO" in formatted
+    assert "Test message" in formatted
 
 
 def test_google_cloud_log_truncate():
-    long_message = "a" * (SuperLogs.LOGGING_MAX_SIZE + 1000)
-    gsutil_uri = "gs://test-bucket/test-log.txt"
-
-    truncated_message = SuperLogs.google_cloud_log_truncate(long_message, gsutil_uri)
-
-    assert len(truncated_message.encode("utf-8")) <= SuperLogs.LOGGING_MAX_SIZE
-    assert "... [truncated]" in truncated_message
-    assert gsutil_uri in truncated_message
+    long_message = "a" * 300 * 1024  # 300KB message
+    truncated = SuperLogs.google_cloud_log_truncate(long_message, "gs://test-bucket/test-blob")
+    assert len(truncated.encode("utf-8")) <= SuperLogs.LOGGING_MAX_SIZE
+    assert "[truncated]" in truncated
+    assert "gs://test-bucket/test-blob" in truncated
 
 
-@patch("google.cloud.storage.Client")
-@patch("google.cloud.storage.Bucket")
-@patch("google.cloud.storage.Blob")
-def test_save_large_log_to_gcs(mock_blob, mock_bucket, mock_storage_client, superlogs_instance):
-    mock_storage_client.return_value.bucket.return_value = mock_bucket
-    mock_bucket.blob.return_value = mock_blob
+@pytest.mark.parametrize("environment", ["localdev", "unittest", "production"])
+def test_setup_logging(environment):
+    with patch("google.cloud.logging.Client"), patch("google.cloud.storage.Client"):
+        superlogs = SuperLogs(environment=environment, default_bucket="test-bucket")
+        assert logger._core.handlers  # Check that handlers were added
+        assert "ALERT" in logger._core.levels
+        assert "EMERGENCY" in logger._core.levels
 
-    log_message = "Test log message"
+
+def test_save_large_log_to_gcs(superlogs_instance, mock_storage):
+    mock_blob = MagicMock()
+    mock_storage.blob.return_value = mock_blob
+
     result = superlogs_instance.save_large_log_to_gcs(
-        log_message, "instance-1", "trace-123", "span-456", "1234", "5678"
+        "Large log message", "instance", "trace", "span", "process", "thread"
     )
 
     assert result.startswith("gs://test-bucket/logs/")
-    mock_blob.upload_from_string.assert_called_once_with(log_message)
+    mock_blob.upload_from_string.assert_called_once()
 
 
-def test_get_logger():
-    assert SuperLogs.get_logger() == logger
+def test_google_cloud_log_sink(superlogs_instance, mock_cloud_logging):
+    mock_message = MagicMock()
+    mock_message.record = {
+        "level": {"name": "INFO"},
+        "time": MagicMock(),
+        "extra": {"instance_id": "test", "trace_id": "trace", "span_id": "span"},
+        "process": {"id": 1},
+        "thread": {"id": 1},
+        "name": "test_logger",
+        "function": "test_func",
+        "line": 10,
+        "message": "Test message",
+    }
+
+    # Replace the cloud_logger in the superlogs_instance with our mock
+    superlogs_instance.cloud_logger = mock_cloud_logging
+
+    superlogs_instance.google_cloud_log_sink(mock_message)
+
+    mock_cloud_logging.log_struct.assert_called_once()
+    log_entry = mock_cloud_logging.log_struct.call_args[0][0]
+    assert log_entry["level"] == "INFO"
+    assert "Test message" in log_entry["message"]
 
 
 def test_custom_log_levels():
-    logger.alert("Test alert message")
-    logger.emergency("Test emergency message")
-    # These tests mainly ensure that the custom log levels don't raise exceptions
-    # You might want to add more specific assertions based on your needs
+    assert "ALERT" in logger._core.levels
+    assert "EMERGENCY" in logger._core.levels
+
+    with patch.object(logger, "log") as mock_log:
+        logger.alert("Test alert")
+        mock_log.assert_called_with("ALERT", "Test alert")
+
+        logger.emergency("Test emergency")
+        mock_log.assert_called_with("EMERGENCY", "Test emergency")

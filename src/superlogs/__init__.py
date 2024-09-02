@@ -40,9 +40,11 @@ class SuperLogs:
         # Remove all existing handlers to avoid duplicate logs
         logger.remove()
 
-        # Add custom log levels
-        logger.level("ALERT", no=70, color="<yellow>")
-        logger.level("EMERGENCY", no=80, color="<red>")
+        # Add custom log levels if they don't exist
+        if "ALERT" not in logger._core.levels:
+            logger.level("ALERT", no=70, color="<yellow>")
+        if "EMERGENCY" not in logger._core.levels:
+            logger.level("EMERGENCY", no=80, color="<red>")
 
         if self.environment in ["localdev", "unittest"]:
             custom_format = (
@@ -62,8 +64,8 @@ class SuperLogs:
     def google_cloud_log_format(record: dict) -> str:
         custom_format = (
             "{extra[instance_id]} | {extra[trace_id]} | {extra[span_id]} | "
-            "{process.id} | {thread.id} | "
-            "{level: <8} | "
+            "{process[id]} | {thread[id]} | "  # Changed these lines
+            "{level[name]: <8} | "  # Changed this line
             "{name}:{function}:{line} - "
             "{message}"
         )
@@ -115,30 +117,30 @@ class SuperLogs:
 
     def google_cloud_log_sink(self, message):
         record = message.record
-        log_level = record["level"].name
+        log_level = record["level"]["name"]
         severity = self.LOGURU_LEVEL_TO_GCP_SEVERITY.get(log_level, "DEFAULT")
         log_message = self.google_cloud_log_format(record)
         instance_id = record["extra"].get("instance_id", "-")
         trace_id = record["extra"].get("trace_id", "-")
         span_id = record["extra"].get("span_id", "-")
-        process_id = record["process"].id
-        thread_id = record["thread"].id
+        process_id = record["process"]["id"]
+        thread_id = record["thread"]["id"]
 
         if len(log_message.encode("utf-8")) > self.LOGGING_MAX_SIZE:
-            gsutil_uri = self.save_large_log_to_gcs(log_message, instance_id, trace_id, span_id, process_id, thread_id)
+            gsutil_uri = self.save_large_log_to_gcs(
+                log_message, instance_id, trace_id, span_id, str(process_id), str(thread_id)
+            )
             log_message = self.google_cloud_log_truncate(log_message, gsutil_uri)
 
-        self.cloud_logger.log_struct(
-            {
-                "message": log_message,
-                "level": log_level,
-                "time": record["time"].isoformat(),
-                "instance_id": instance_id,
-                "trace_id": trace_id,
-                "span_id": span_id,
-            },
-            severity=severity,
-        )
+        log_entry = {
+            "message": log_message,
+            "level": log_level,
+            "time": record["time"].isoformat(),
+            "instance_id": instance_id,
+            "trace_id": trace_id,
+            "span_id": span_id,
+        }
+        self.cloud_logger.log_struct(log_entry, severity=severity)
 
     @staticmethod
     def get_logger():
