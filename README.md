@@ -1,6 +1,6 @@
 # 💾 SuperLogs
 
-Version: 0.0.5
+Version: 0.0.6
 
 SuperLogs is a Python package that provides a flexible and powerful logging solution, integrating with Google Cloud Logging and supporting various environments.
 
