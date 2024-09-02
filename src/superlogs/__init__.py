@@ -186,14 +186,11 @@ class SuperLogs:
         frame = inspect.currentframe().f_back.f_back
 
         # Extract filename, function name, and line number
-        filename = frame.f_code.co_filename
         func_name = frame.f_code.co_name
         lineno = frame.f_lineno
 
         # Log with the extracted context
-        logger.opt(depth=2).log(
-            level, f"{os.path.basename(filename)}:{func_name}:{lineno} - {message}", *args, **kwargs
-        )
+        logger.opt(depth=2).log(level, f"{func_name}:{lineno} - {message}", *args, **kwargs)
 
     @classmethod
     def setup_custom_levels(cls):

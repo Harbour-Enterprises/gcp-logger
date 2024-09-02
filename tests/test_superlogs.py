@@ -114,7 +114,7 @@ def test_custom_log_levels():
 
         # Check if the log message matches the expected format
         log_message = mock_log.call_args[0][1]
-        assert re.match(r"test_superlogs(\.py)?:test_custom_log_levels:\d+ - Test alert", log_message)
+        assert re.match(r"test_custom_log_levels:\d+ - Test alert", log_message)
 
         logger.emergency("Test emergency")
         mock_opt.assert_called_with(depth=2)
@@ -124,4 +124,4 @@ def test_custom_log_levels():
 
         # Check if the log message matches the expected format
         log_message = mock_log.call_args[0][1]
-        assert re.match(r"test_superlogs(\.py)?:test_custom_log_levels:\d+ - Test emergency", log_message)
+        assert re.match(r"test_custom_log_levels:\d+ - Test emergency", log_message)
