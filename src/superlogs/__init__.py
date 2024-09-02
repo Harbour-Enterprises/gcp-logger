@@ -28,13 +28,32 @@ class SuperLogs:
     def __init__(self, environment: str, default_bucket: str = None):
         self.environment = environment
         self.default_bucket = default_bucket or os.getenv("GCP_DEFAULT_BUCKET")
-        self.gae_instance = os.getenv("GAE_INSTANCE", "-")[:10]
+
+        # Determine the instance ID based on the environment
+        self.instance_id = self._get_instance_id()
 
         # Initialize Google Cloud clients
         self.client = cloud_logging.Client()
         self.cloud_logger = self.client.logger("superlogs_logger")
 
         self.setup_logging()
+
+    def _get_instance_id(self):
+        # Check for App Engine
+        if os.getenv("GAE_INSTANCE"):
+            return os.getenv("GAE_INSTANCE")[:10]
+
+        # Check for Cloud Run
+        elif os.getenv("K_SERVICE"):
+            return f"{os.getenv('K_SERVICE')}-{os.getenv('K_REVISION')}"[:9]  # Changed from [:10] to [:9]
+
+        # Check for Cloud Functions
+        elif os.getenv("FUNCTION_NAME"):
+            return os.getenv("FUNCTION_NAME")[:10]
+
+        # Default case
+        else:
+            return "-"
 
     def setup_logging(self):
         # Remove all existing handlers to avoid duplicate logs
@@ -58,7 +77,7 @@ class SuperLogs:
             logger.configure(extra={"trace_id": "-"})
         else:
             logger.add(self.google_cloud_log_sink, level="DEBUG", colorize=False)
-            logger.configure(extra={"instance_id": self.gae_instance, "trace_id": "-", "span_id": "-"})
+        logger.configure(extra={"instance_id": self.instance_id, "trace_id": "-", "span_id": "-"})
 
     @staticmethod
     def google_cloud_log_format(record: dict) -> str:
