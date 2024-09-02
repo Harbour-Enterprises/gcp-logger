@@ -1,5 +1,6 @@
 # File: superlogs/__init__.py
 
+import inspect
 import os
 import sys
 import time
@@ -179,6 +180,35 @@ class SuperLogs:
     def get_logger():
         return logger
 
+    @staticmethod
+    def _log_with_context(level, message, *args, **kwargs):
+        # Get the caller's frame
+        frame = inspect.currentframe().f_back.f_back
 
-logger.alert = lambda message, *args, **kwargs: logger.log("ALERT", message, *args, **kwargs)
-logger.emergency = lambda message, *args, **kwargs: logger.log("EMERGENCY", message, *args, **kwargs)
+        # Extract filename, function name, and line number
+        filename = frame.f_code.co_filename
+        func_name = frame.f_code.co_name
+        lineno = frame.f_lineno
+
+        # Log with the extracted context
+        logger.opt(depth=2).log(
+            level, f"{os.path.basename(filename)}:{func_name}:{lineno} - {message}", *args, **kwargs
+        )
+
+    @classmethod
+    def setup_custom_levels(cls):
+        logger.level("ALERT", no=70, color="<yellow>")
+        logger.level("EMERGENCY", no=80, color="<red>")
+
+        def alert(message, *args, **kwargs):
+            cls._log_with_context("ALERT", message, *args, **kwargs)
+
+        def emergency(message, *args, **kwargs):
+            cls._log_with_context("EMERGENCY", message, *args, **kwargs)
+
+        logger.alert = alert
+        logger.emergency = emergency
+
+
+# Initialize custom log levels
+SuperLogs.setup_custom_levels()

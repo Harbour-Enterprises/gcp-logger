@@ -1,5 +1,6 @@
 # File: tests/test_superlogs.py
 
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -102,9 +103,25 @@ def test_custom_log_levels():
     assert "ALERT" in logger._core.levels
     assert "EMERGENCY" in logger._core.levels
 
-    with patch.object(logger, "log") as mock_log:
+    with patch.object(logger, "opt") as mock_opt:
+        mock_log = mock_opt.return_value.log
+
         logger.alert("Test alert")
-        mock_log.assert_called_with("ALERT", "Test alert")
+        mock_opt.assert_called_with(depth=2)
+
+        # Check if the log was called with ALERT level
+        assert mock_log.call_args[0][0] == "ALERT"
+
+        # Check if the log message matches the expected format
+        log_message = mock_log.call_args[0][1]
+        assert re.match(r"test_superlogs(\.py)?:test_custom_log_levels:\d+ - Test alert", log_message)
 
         logger.emergency("Test emergency")
-        mock_log.assert_called_with("EMERGENCY", "Test emergency")
+        mock_opt.assert_called_with(depth=2)
+
+        # Check if the log was called with EMERGENCY level
+        assert mock_log.call_args[0][0] == "EMERGENCY"
+
+        # Check if the log message matches the expected format
+        log_message = mock_log.call_args[0][1]
+        assert re.match(r"test_superlogs(\.py)?:test_custom_log_levels:\d+ - Test emergency", log_message)
