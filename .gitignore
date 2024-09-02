@@ -1,0 +1,10 @@
+.DS_Store
+.vscode/
+dist/
+superlogs.egg-info/
+.env
+Pipfile*
+*.log
+__pycache__/
+.pytest_cache/
+dev/
