@@ -1,4 +1,4 @@
-# File: superlogs/__init__.py
+# File: gcp_logger/__init__.py
 
 import inspect
 import os
@@ -11,7 +11,7 @@ from google.cloud import storage
 from loguru import logger
 
 
-class SuperLogs:
+class GCPLogger:
     LOGURU_LEVEL_TO_GCP_SEVERITY = {
         "TRACE": "DEBUG",
         "DEBUG": "DEBUG",
@@ -35,7 +35,7 @@ class SuperLogs:
 
         # Initialize Google Cloud clients
         self.client = cloud_logging.Client()
-        self.cloud_logger = self.client.logger("superlogs_logger")
+        self.cloud_logger = self.client.logger("gcp_logger")
 
         self.setup_logging()
 
@@ -208,4 +208,4 @@ class SuperLogs:
 
 
 # Initialize custom log levels
-SuperLogs.setup_custom_levels()
+GCPLogger.setup_custom_levels()

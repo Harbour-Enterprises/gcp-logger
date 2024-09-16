@@ -1,10 +1,12 @@
 .DS_Store
 .vscode/
 dist/
-superlogs.egg-info/
+gcp_logger.egg-info/
 .env
 Pipfile*
 *.log
 __pycache__/
 .pytest_cache/
 dev/
+.coverage
+coverage.xml

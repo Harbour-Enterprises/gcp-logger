@@ -1,10 +1,10 @@
-from src.superlogs import SuperLogs
+from src.gcp_logger import GCPLogger
 
-# Initialize SuperLogs
-superlogs = SuperLogs(environment="localdev", default_bucket="my-gcs-bucket")
+# Initialize GCPLogger
+gcp_logger = GCPLogger(environment="localdev", default_bucket="my-gcs-bucket")
 
 # Get the logger instance
-logger = superlogs.get_logger()
+logger = gcp_logger.get_logger()
 
 # Use the logger
 logger.info("This is an info log")

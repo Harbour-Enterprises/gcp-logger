@@ -1,11 +1,11 @@
-# File: tests/test_superlogs.py
+# File: tests/test_gcp_logger.py
 
 import re
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.superlogs import SuperLogs, logger
+from src.gcp_logger import GCPLogger, logger
 
 
 @pytest.fixture
@@ -17,8 +17,8 @@ def mock_google_cloud():
 
 
 @pytest.fixture
-def superlogs_instance(mock_google_cloud):
-    return SuperLogs(environment="unittest", default_bucket="test-bucket")
+def gcp_logger_instance(mock_google_cloud):
+    return GCPLogger(environment="unittest", default_bucket="test-bucket")
 
 
 @pytest.mark.parametrize(
@@ -32,29 +32,29 @@ def superlogs_instance(mock_google_cloud):
 )
 def test_get_instance_id(env_var, expected_id, mock_google_cloud):
     with patch.dict("os.environ", env_var, clear=True):
-        superlogs = SuperLogs(environment="production", default_bucket="test-bucket")
-        assert superlogs.instance_id == expected_id
+        gcp_logger = GCPLogger(environment="production", default_bucket="test-bucket")
+        assert gcp_logger.instance_id == expected_id
 
 
-def test_init(superlogs_instance):
-    assert superlogs_instance is not None
-    assert superlogs_instance.environment == "unittest"
-    assert superlogs_instance.default_bucket == "test-bucket"
-    assert superlogs_instance.instance_id == "-"  # Default value for non-cloud environments
+def test_init(gcp_logger_instance):
+    assert gcp_logger_instance is not None
+    assert gcp_logger_instance.environment == "unittest"
+    assert gcp_logger_instance.default_bucket == "test-bucket"
+    assert gcp_logger_instance.instance_id == "-"  # Default value for non-cloud environments
 
 
 @pytest.mark.parametrize("environment", ["localdev", "unittest", "production"])
 def test_setup_logging(environment, mock_google_cloud):
-    superlogs = SuperLogs(environment=environment, default_bucket="test-bucket")
+    gcp_logger = GCPLogger(environment=environment, default_bucket="test-bucket")
     assert logger._core.handlers  # Check that handlers were added
     assert "ALERT" in logger._core.levels
     assert "EMERGENCY" in logger._core.levels
 
 
-def test_save_large_log_to_gcs(mock_google_cloud, superlogs_instance):
+def test_save_large_log_to_gcs(mock_google_cloud, gcp_logger_instance):
     mock_blob = mock_google_cloud.return_value.bucket.return_value.blob.return_value
 
-    result = superlogs_instance.save_large_log_to_gcs(
+    result = gcp_logger_instance.save_large_log_to_gcs(
         "Large log message", "instance", "trace", "span", "process", "thread"
     )
 
@@ -62,7 +62,7 @@ def test_save_large_log_to_gcs(mock_google_cloud, superlogs_instance):
     mock_blob.upload_from_string.assert_called_once_with("Large log message")
 
 
-def test_google_cloud_log_sink(superlogs_instance):
+def test_google_cloud_log_sink(gcp_logger_instance):
     class MockLevel:
         name = "INFO"
 
@@ -87,9 +87,9 @@ def test_google_cloud_log_sink(superlogs_instance):
 
     # Mock the cloud logger
     mock_cloud_logger = MagicMock()
-    superlogs_instance.cloud_logger = mock_cloud_logger
+    gcp_logger_instance.cloud_logger = mock_cloud_logger
 
-    superlogs_instance.google_cloud_log_sink(mock_message)
+    gcp_logger_instance.google_cloud_log_sink(mock_message)
 
     mock_cloud_logger.log_struct.assert_called_once()
     log_entry = mock_cloud_logger.log_struct.call_args[0][0]

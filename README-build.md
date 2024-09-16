@@ -25,5 +25,5 @@ python -m build src
 # Upload package to PyPi
 
 ```bash
-python -m twine upload --repository superlogs src/dist/*
+python -m twine upload --repository gcp-logger src/dist/*
 ```

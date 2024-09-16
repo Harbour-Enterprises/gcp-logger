@@ -1,8 +1,8 @@
-# 💾 SuperLogs
+# 💾 GCPLogger
 
 Version: 0.0.6
 
-SuperLogs is a Python package that provides a flexible and powerful logging solution, integrating with Google Cloud Logging and supporting various environments.
+GCPLogger is a Python package that provides a flexible and powerful logging solution, integrating with Google Cloud Logging and supporting various environments.
 
 ## Features
 
@@ -18,7 +18,7 @@ SuperLogs is a Python package that provides a flexible and powerful logging solu
 ## Installation
 
 ```bash
-pip install superlogs
+pip install gcp-logger
 ```
 
 ## Usage
@@ -26,13 +26,13 @@ pip install superlogs
 Basic usage:
 
 ```python
-from superlogs import SuperLogs
+from gcp_logger import GCPLogger
 
-# Initialize SuperLogs
-superlogs = SuperLogs(environment="production", default_bucket="my-gcs-bucket")
+# Initialize GCPLogger
+gcp_logger = GCPLogger(environment="production", default_bucket="my-gcs-bucket")
 
 # Get the logger instance
-logger = superlogs.get_logger()
+logger = gcp_logger.get_logger()
 
 # Use the logger
 logger.info("This is an info log")
