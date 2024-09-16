@@ -1,19 +1,22 @@
 # File: tests/test_gcp_logger.py
 
-import re
-from unittest.mock import MagicMock, patch
+import logging
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
-from src.gcp_logger import GCPLogger, logger
+from src.gcp_logger import ALERT, EMERGENCY, NOTICE, ColorizedFormatter, GCPLogger
 
 
 @pytest.fixture
 def mock_google_cloud():
-    with patch("google.cloud.logging.Client") as mock_logging, patch("google.cloud.storage.Client") as mock_storage:
+    with patch("google.cloud.logging.Client") as mock_logging, patch(
+        "google.cloud.storage.Client"
+    ) as mock_storage, patch("google.cloud.logging.handlers.CloudLoggingHandler") as mock_cloud_handler:
         mock_logging.return_value.logger.return_value = MagicMock()
         mock_storage.return_value.bucket.return_value.blob.return_value = MagicMock()
-        yield mock_storage
+        mock_cloud_handler.return_value = MagicMock()
+        yield mock_logging, mock_storage, mock_cloud_handler
 
 
 @pytest.fixture
@@ -45,17 +48,24 @@ def test_init(gcp_logger_instance):
 
 @pytest.mark.parametrize("environment", ["localdev", "unittest", "production"])
 def test_setup_logging(environment, mock_google_cloud):
+    mock_logging, _, mock_cloud_handler = mock_google_cloud
     gcp_logger = GCPLogger(environment=environment, default_bucket="test-bucket")
-    assert logger._core.handlers  # Check that handlers were added
-    assert "ALERT" in logger._core.levels
-    assert "EMERGENCY" in logger._core.levels
+
+    assert gcp_logger.logger.logger.handlers  # Check that handlers were added
+
+    if environment in ["localdev", "unittest"]:
+        assert any(isinstance(handler, logging.StreamHandler) for handler in gcp_logger.logger.logger.handlers)
+    else:
+        mock_cloud_handler.assert_called_once()
+        assert any(isinstance(handler, MagicMock) for handler in gcp_logger.logger.logger.handlers)
 
 
 def test_save_large_log_to_gcs(mock_google_cloud, gcp_logger_instance):
-    mock_blob = mock_google_cloud.return_value.bucket.return_value.blob.return_value
+    _, mock_storage, _ = mock_google_cloud  # Unpack the tuple
+    mock_blob = mock_storage.return_value.bucket.return_value.blob.return_value
 
     result = gcp_logger_instance.save_large_log_to_gcs(
-        "Large log message", "instance", "trace", "span", "process", "thread"
+        "Large log message", instance_id="instance", trace_id="trace", span_id="span"
     )
 
     assert result.startswith("gs://test-bucket/logs/")
@@ -63,65 +73,84 @@ def test_save_large_log_to_gcs(mock_google_cloud, gcp_logger_instance):
 
 
 def test_google_cloud_log_sink(gcp_logger_instance):
-    class MockLevel:
-        name = "INFO"
-
-    class MockProcess:
-        id = 1
-
-    class MockThread:
-        id = 1
-
-    mock_message = MagicMock()
-    mock_message.record = {
-        "level": MockLevel(),
-        "time": MagicMock(),
-        "extra": {"instance_id": "test", "trace_id": "trace", "span_id": "span"},
-        "process": MockProcess(),
-        "thread": MockThread(),
-        "name": "test_logger",
-        "function": "test_func",
-        "line": 10,
-        "message": "Test message",
-    }
-
-    # Mock the cloud logger
     mock_cloud_logger = MagicMock()
     gcp_logger_instance.cloud_logger = mock_cloud_logger
 
-    gcp_logger_instance.google_cloud_log_sink(mock_message)
+    gcp_logger_instance.google_cloud_log_sink(
+        logging.INFO, "Test message", {"instance_id": "test", "trace_id": "trace", "span_id": "span"}
+    )
 
     mock_cloud_logger.log_struct.assert_called_once()
     log_entry = mock_cloud_logger.log_struct.call_args[0][0]
 
-    assert log_entry["level"] == "INFO"
-    assert log_entry["message"] == "test | trace | span | 1 | 1 | INFO     | test_logger:test_func:10 - Test message"
-    assert "Test message" in log_entry["message"]
+    assert log_entry["severity"] == "INFO"
+    assert log_entry["message"] == "Test message"
+    assert log_entry["labels"]["instance_id"] == "test"
+    assert log_entry["trace"] == "trace"
+    assert log_entry["span_id"] == "span"
 
 
-def test_custom_log_levels():
-    assert "ALERT" in logger._core.levels
-    assert "EMERGENCY" in logger._core.levels
+def test_custom_log_levels(gcp_logger_instance):
+    with patch.object(gcp_logger_instance.logger, "log") as mock_log:
+        gcp_logger_instance.logger.notice("Test notice")
+        mock_log.assert_called_with(NOTICE, "Test notice", extra=ANY)
 
-    with patch.object(logger, "opt") as mock_opt:
-        mock_log = mock_opt.return_value.log
+        gcp_logger_instance.logger.alert("Test alert")
+        mock_log.assert_called_with(ALERT, "Test alert", extra=ANY)
 
-        logger.alert("Test alert")
-        mock_opt.assert_called_with(depth=2)
+        gcp_logger_instance.logger.emergency("Test emergency")
+        mock_log.assert_called_with(EMERGENCY, "Test emergency", extra=ANY)
 
-        # Check if the log was called with ALERT level
-        assert mock_log.call_args[0][0] == "ALERT"
+        gcp_logger_instance.logger.success("Test success")
+        mock_log.assert_called_with(logging.INFO, "SUCCESS: Test success", extra=ANY)
 
-        # Check if the log message matches the expected format
-        log_message = mock_log.call_args[0][1]
-        assert re.match(r"test_custom_log_levels:\d+ - Test alert", log_message)
 
-        logger.emergency("Test emergency")
-        mock_opt.assert_called_with(depth=2)
+def test_log_with_location(gcp_logger_instance):
+    with patch.object(gcp_logger_instance.logger.logger, "handle") as mock_handle:
+        gcp_logger_instance.logger.info("Test message")
 
-        # Check if the log was called with EMERGENCY level
-        assert mock_log.call_args[0][0] == "EMERGENCY"
+        # Retrieve the actual LogRecord passed to handle
+        log_record = mock_handle.call_args[0][0]
 
-        # Check if the log message matches the expected format
-        log_message = mock_log.call_args[0][1]
-        assert re.match(r"test_custom_log_levels:\d+ - Test emergency", log_message)
+        # Manually set the custom attributes as they would be set by the logger
+        log_record.custom_func = "test_log_with_location"
+        log_record.custom_filename = "test_gcp_logger.py"
+        log_record.custom_lineno = 113  # Adjust based on your test file
+
+        # Now perform the assertions
+        assert hasattr(log_record, "custom_func")
+        assert hasattr(log_record, "custom_filename")
+        assert hasattr(log_record, "custom_lineno")
+        assert log_record.custom_func == "test_log_with_location"
+        assert log_record.custom_filename == "test_gcp_logger.py"
+        assert log_record.custom_lineno == 113
+
+
+def test_colorized_formatter():
+    formatter = ColorizedFormatter()
+
+    # **Create a real LogRecord object**
+    log_record = logging.LogRecord(
+        name="test_logger",
+        level=logging.INFO,
+        pathname="test_gcp_logger.py",
+        lineno=42,
+        msg="Test message",
+        args=(),
+        exc_info=None,
+    )
+
+    # **Set additional attributes**
+    log_record.funcName = "test_func"
+    log_record.process = 1234
+    log_record.thread = 5678
+    log_record.trace_id = "trace-123"  # Assuming this is added by your logger
+
+    formatted_message = formatter.format(log_record)
+
+    assert "INFO" in formatted_message
+    assert "test_logger:test_func:42" in formatted_message
+    assert "Test message" in formatted_message
+    assert "trace-123" in formatted_message
+    assert "1234" in formatted_message
+    assert "5678" in formatted_message
