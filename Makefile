@@ -1,5 +1,3 @@
-include .env
-
 default: run
 MAKEFLAGS += -s
 
