@@ -1,4 +1,5 @@
 diff_cover==9.2.0
 pytest-asyncio==0.24.0
+pytest-benchmark==4.0.0
 pytest-cov==5.0.0
 pytest==8.3.2

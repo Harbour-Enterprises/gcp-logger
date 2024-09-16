@@ -5,6 +5,7 @@ help:
 	@echo "⚈ run			---> 🎮 Run project locally (default)."
 	@echo "⚈ debug			---> 🕵️  Debug project locally."
 	@echo "⚈ test			---> 🧪 Run tests."
+	@echo "⚈ benchmark		---> 📊 Run performance benchmarks."	
 	@echo "⚈ diff-cover		---> 📊 Run tests and diff-cover."
 	@echo "⚈ diff-cover-only	---> 🔍 Run diff-cover only."
 	@echo "⚈ freeze		---> 🧊 Freeze requirements."
@@ -19,7 +20,11 @@ debug:
 
 test:
 	@echo "\n> 🧪 Running tests...\n"
-	python -m pytest tests --cov=./ --cov-report=xml --cov-config=.coveragerc
+	python -m pytest tests --cov=./ --cov-report=xml --cov-config=.coveragerc -m "not performance"
+
+benchmark:
+	@echo "\n> 📊 Running performance tests...\n"
+	python -m pytest tests --cov=./ --cov-report=xml --cov-config=.coveragerc -m "performance" --benchmark-only
 
 ensure-diff-cover:
 	@echo "\n> 🔍 Checking for diff-cover...\n"
@@ -81,16 +86,3 @@ sort:
 			echo "$$file not found, skipping..."; \
 		fi \
 	done
-
-publish:
-	@echo "\n> 🚀 Building and publishing a new package version...\n"
-	@echo "\n> 📦 Installing build dependencies...\n"
-	pip install -r requirements-build.txt
-	@echo "\n> 🗑️ Erasing previous build...\n"
-	rm -rf src/dist
-	@echo "\n> ⬆️ Bumping package version...\n"
-	bump2version patch --verbose
-	@echo "\n> 🔨 Building package...\n"
-	python -m build src
-	@echo "\n> 🌐 Uploading package to Test PyPi...\n"
-	python -m twine upload --repository usepolvo-cli src/dist/*
