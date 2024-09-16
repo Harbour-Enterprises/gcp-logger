@@ -1,27 +1,126 @@
 # File: gcp_logger/__init__.py
 
-import inspect
+import logging
 import os
 import sys
 import time
-from typing import Union
+from functools import lru_cache
+from typing import Dict, Union
 
 from google.cloud import logging as cloud_logging
 from google.cloud import storage
-from loguru import logger
+
+# Lazy import of colorama
+colorama = None
+
+# Define custom logging levels
+NOTICE = 25
+ALERT = 70
+EMERGENCY = 80
+
+# Add custom levels
+logging.addLevelName(NOTICE, "NOTICE")
+logging.addLevelName(ALERT, "ALERT")
+logging.addLevelName(EMERGENCY, "EMERGENCY")
+
+
+class ColorizedFormatter(logging.Formatter):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.color_codes = self._generate_color_codes()
+
+    @staticmethod
+    @lru_cache(maxsize=None)
+    def _generate_color_codes() -> Dict[int, str]:
+        global colorama
+        if colorama is None:
+            import colorama
+
+            colorama.init(autoreset=True)
+
+        return {
+            logging.DEBUG: colorama.Fore.CYAN,
+            logging.INFO: colorama.Fore.GREEN,
+            NOTICE: colorama.Fore.BLUE,
+            logging.WARNING: colorama.Fore.YELLOW,
+            logging.ERROR: colorama.Fore.RED,
+            logging.CRITICAL: colorama.Fore.RED + colorama.Style.BRIGHT,
+            ALERT: colorama.Fore.YELLOW + colorama.Style.BRIGHT,
+            EMERGENCY: colorama.Fore.RED + colorama.Style.BRIGHT,
+        }
+
+    def format(self, record):
+        color_code = self.color_codes.get(record.levelno, self.color_codes[logging.DEBUG])
+        reset = colorama.Style.RESET_ALL
+
+        formatted_time = colorama.Fore.GREEN + self.formatTime(record, self.datefmt) + reset
+        formatted_level = color_code + f"{record.levelname:<8}" + reset
+
+        # Use the custom fields if available, otherwise fall back to the standard ones
+        func = getattr(record, "custom_func", record.funcName)
+        filename = getattr(record, "custom_filename", record.filename)
+        lineno = getattr(record, "custom_lineno", record.lineno)
+
+        formatted_name = colorama.Fore.CYAN + f"{record.name}:{func}:{lineno}" + reset
+        formatted_message = color_code + record.getMessage() + reset
+
+        # Access extra info from record.__dict__
+        trace_id = record.__dict__.get("trace_id", "-")
+
+        return (
+            f"{formatted_time} | "
+            f"{trace_id} | {record.process} | {record.thread} | "
+            f"{formatted_level} | "
+            f"{formatted_name} - "
+            f"{formatted_message}"
+        )
+
+
+class CustomLoggerAdapter(logging.LoggerAdapter):
+    def process(self, msg, kwargs):
+        extra = kwargs.get("extra", {})
+        extra.update(self.extra)
+        kwargs["extra"] = extra
+        return msg, kwargs
+
+    def _log_with_location(self, level, msg, *args, **kwargs):
+        # Get caller's frame
+        frame = sys._getframe(2)
+        # Create a new dict for extra to avoid modifying the existing one
+        new_extra = {
+            "custom_func": frame.f_code.co_name,
+            "custom_filename": frame.f_code.co_filename,
+            "custom_lineno": frame.f_lineno,
+        }
+        if "extra" in kwargs:
+            kwargs["extra"].update(new_extra)
+        else:
+            kwargs["extra"] = new_extra
+        self.log(level, msg, *args, **kwargs)
+
+    def notice(self, msg, *args, **kwargs):
+        self._log_with_location(NOTICE, msg, *args, **kwargs)
+
+    def alert(self, msg, *args, **kwargs):
+        self._log_with_location(ALERT, msg, *args, **kwargs)
+
+    def emergency(self, msg, *args, **kwargs):
+        self._log_with_location(EMERGENCY, msg, *args, **kwargs)
+
+    def success(self, msg, *args, **kwargs):
+        self._log_with_location(logging.INFO, f"SUCCESS: {msg}", *args, **kwargs)
 
 
 class GCPLogger:
-    LOGURU_LEVEL_TO_GCP_SEVERITY = {
-        "TRACE": "DEBUG",
-        "DEBUG": "DEBUG",
-        "INFO": "INFO",
-        "SUCCESS": "NOTICE",
-        "WARNING": "WARNING",
-        "ERROR": "ERROR",
-        "CRITICAL": "CRITICAL",
-        "ALERT": "ALERT",
-        "EMERGENCY": "EMERGENCY",
+    PYTHON_LEVEL_TO_GCP_SEVERITY = {
+        logging.DEBUG: "DEBUG",
+        logging.INFO: "INFO",
+        NOTICE: "NOTICE",
+        logging.WARNING: "WARNING",
+        logging.ERROR: "ERROR",
+        logging.CRITICAL: "CRITICAL",
+        ALERT: "ALERT",
+        logging.FATAL: "EMERGENCY",
     }
 
     LOGGING_MAX_SIZE = 255 * 1024  # 256KB max size for log messages in Google Cloud Logging
@@ -29,15 +128,24 @@ class GCPLogger:
     def __init__(self, environment: str, default_bucket: str = None):
         self.environment = environment
         self.default_bucket = default_bucket or os.getenv("GCP_DEFAULT_BUCKET")
-
-        # Determine the instance ID based on the environment
         self.instance_id = self._get_instance_id()
 
         # Initialize Google Cloud clients
         self.client = cloud_logging.Client()
         self.cloud_logger = self.client.logger("gcp_logger")
 
+        self.logger = logging.getLogger("gcp_logger")
+        self.logger.setLevel(logging.DEBUG)  # Ensure we capture all log levels
+        self.logger.propagate = False  # Prevent double logging
         self.setup_logging()
+
+        # Wrap logger with CustomLoggerAdapter after setup
+        self.logger = CustomLoggerAdapter(
+            self.logger, extra={"instance_id": self.instance_id, "trace_id": "-", "span_id": "-"}
+        )
+
+        print(f"Logger initialized with level: {self.logger.logger.level}")
+        print(f"Logger handlers: {self.logger.logger.handlers}")
 
     def _get_instance_id(self):
         # Check for App Engine
@@ -46,7 +154,7 @@ class GCPLogger:
 
         # Check for Cloud Run
         elif os.getenv("K_SERVICE"):
-            return f"{os.getenv('K_SERVICE')}-{os.getenv('K_REVISION')}"[:9]  # Changed from [:10] to [:9]
+            return f"{os.getenv('K_SERVICE')}-{os.getenv('K_REVISION')}"[:9]
 
         # Check for Cloud Functions
         elif os.getenv("FUNCTION_NAME"):
@@ -57,28 +165,35 @@ class GCPLogger:
             return "-"
 
     def setup_logging(self):
-        # Remove all existing handlers to avoid duplicate logs
-        logger.remove()
-
-        # Add custom log levels if they don't exist
-        if "ALERT" not in logger._core.levels:
-            logger.level("ALERT", no=70, color="<yellow>")
-        if "EMERGENCY" not in logger._core.levels:
-            logger.level("EMERGENCY", no=80, color="<red>")
+        self.logger.setLevel(logging.DEBUG)  # Set to lowest level to capture all logs
 
         if self.environment in ["localdev", "unittest"]:
-            custom_format = (
-                "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-                "{extra[trace_id]} | {process.id} | {thread.id} | "
-                "<level>{level: <8}</level> | "
-                "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-                "<level>{message}</level>"
-            )
-            logger.add(sys.stdout, format=custom_format, level="TRACE", colorize=True, backtrace=True, diagnose=True)
-            logger.configure(extra={"trace_id": "-"})
+            formatter = ColorizedFormatter(datefmt="%Y-%m-%d %H:%M:%S.%f")
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
         else:
-            logger.add(self.google_cloud_log_sink, level="DEBUG", colorize=False)
-        logger.configure(extra={"instance_id": self.instance_id, "trace_id": "-", "span_id": "-"})
+            gcp_handler = cloud_logging.handlers.CloudLoggingHandler(self.client)
+            self.logger.addHandler(gcp_handler)
+
+    def get_logger(self):
+        return self.logger
+
+    def log(self, level: int, message: str, **kwargs):
+        extra = {
+            "instance_id": self.instance_id,
+            "trace_id": kwargs.get("trace_id", "-"),
+            "span_id": kwargs.get("span_id", "-"),
+        }
+
+        if len(message.encode("utf-8")) > self.LOGGING_MAX_SIZE:
+            gsutil_uri = self.save_large_log_to_gcs(message, **extra)
+            message = self.google_cloud_log_truncate(message, gsutil_uri)
+
+        if self.environment in ["localdev", "unittest"]:
+            self.logger.log(level, message, extra=extra)
+        else:
+            self.google_cloud_log_sink(level, message, extra)
 
     @staticmethod
     def google_cloud_log_format(record: dict) -> str:
@@ -105,15 +220,14 @@ class GCPLogger:
 
         return custom_format.format(**formatted_record)
 
-    @classmethod
-    def google_cloud_log_truncate(cls, log_message: str, gsutil_uri: str | None) -> str:
+    def google_cloud_log_truncate(self, log_message: str, gsutil_uri: str | None) -> str:
         truncation_notice = "... [truncated]"
         additional_text_template = "\nMessage has been truncated, please check: {gsutil_uri} for full log message"
 
         truncation_notice_length = len(truncation_notice.encode("utf-8"))
         gsutil_uri_length = len(gsutil_uri.encode("utf-8")) if gsutil_uri else 0
         additional_text_length = len(additional_text_template.encode("utf-8")) - len("{gsutil_uri}") + gsutil_uri_length
-        max_message_length = cls.LOGGING_MAX_SIZE - truncation_notice_length - additional_text_length
+        max_message_length = self.LOGGING_MAX_SIZE - truncation_notice_length - additional_text_length
 
         truncated_message = log_message.encode("utf-8")[:max_message_length].decode("utf-8", errors="ignore")
 
@@ -124,21 +238,12 @@ class GCPLogger:
 
         return truncated_message
 
-    def save_large_log_to_gcs(
-        self, log_message: str, instance_id: str, trace_id: str, span_id: str, process_id: str, thread_id: str
-    ) -> Union[str, None]:
+    def save_large_log_to_gcs(self, log_message: str, **kwargs) -> Union[str, None]:
         storage_client = storage.Client()
         storage_bucket = storage_client.bucket(self.default_bucket)
         timestamp = int(time.time())
 
-        parts = [timestamp, process_id, thread_id]
-        if instance_id != "-":
-            parts.insert(1, instance_id)
-        if trace_id != "-":
-            parts.insert(2, trace_id)
-        if span_id != "-":
-            parts.insert(3, span_id)
-
+        parts = [timestamp, kwargs.get("instance_id", "-"), kwargs.get("trace_id", "-"), kwargs.get("span_id", "-")]
         blob_name = "logs/" + "_".join(map(str, parts)) + ".log"
         blob = storage_bucket.blob(blob_name)
 
@@ -146,66 +251,27 @@ class GCPLogger:
             blob.upload_from_string(log_message)
             return f"gs://{self.default_bucket}/{blob_name}"
         except Exception as e:
-            logger.error(f"Failed to upload log to GCS: {e}")
+            self.logger.error(f"Failed to upload log to GCS: {e}")
             return None
 
-    def google_cloud_log_sink(self, message):
-        record = message.record
-        log_level = record["level"].name
-        severity = self.LOGURU_LEVEL_TO_GCP_SEVERITY.get(log_level, "DEFAULT")
-        log_message = self.google_cloud_log_format(record)
-        instance_id = record["extra"].get("instance_id", "-")
-        trace_id = record["extra"].get("trace_id", "-")
-        span_id = record["extra"].get("span_id", "-")
-        process_id = record["process"].id
-        thread_id = record["thread"].id
-
-        if len(log_message.encode("utf-8")) > self.LOGGING_MAX_SIZE:
-            gsutil_uri = self.save_large_log_to_gcs(
-                log_message, instance_id, trace_id, span_id, str(process_id), str(thread_id)
-            )
-            log_message = self.google_cloud_log_truncate(log_message, gsutil_uri)
+    def google_cloud_log_sink(self, level: int, message: str, extra: dict):
+        severity = self.PYTHON_LEVEL_TO_GCP_SEVERITY.get(level, "DEFAULT")
 
         log_entry = {
-            "message": log_message,
-            "level": log_level,
-            "time": record["time"].isoformat(),
-            "instance_id": instance_id,
-            "trace_id": trace_id,
-            "span_id": span_id,
+            "message": message,
+            "severity": severity,
+            "extra": extra,
         }
-        self.cloud_logger.log_struct(log_entry, severity=severity)
 
-    @staticmethod
-    def get_logger():
-        return logger
+        # Add additional context that might be useful for GCP logging
+        log_entry["labels"] = {
+            "instance_id": extra.get("instance_id", "-"),
+            "environment": self.environment,
+        }
 
-    @staticmethod
-    def _log_with_context(level, message, *args, **kwargs):
-        # Get the caller's frame
-        frame = inspect.currentframe().f_back.f_back
+        if extra.get("trace_id") != "-":
+            log_entry["trace"] = extra["trace_id"]
+        if extra.get("span_id") != "-":
+            log_entry["span_id"] = extra["span_id"]
 
-        # Extract filename, function name, and line number
-        func_name = frame.f_code.co_name
-        lineno = frame.f_lineno
-
-        # Log with the extracted context
-        logger.opt(depth=2).log(level, f"{func_name}:{lineno} - {message}", *args, **kwargs)
-
-    @classmethod
-    def setup_custom_levels(cls):
-        logger.level("ALERT", no=70, color="<yellow>")
-        logger.level("EMERGENCY", no=80, color="<red>")
-
-        def alert(message, *args, **kwargs):
-            cls._log_with_context("ALERT", message, *args, **kwargs)
-
-        def emergency(message, *args, **kwargs):
-            cls._log_with_context("EMERGENCY", message, *args, **kwargs)
-
-        logger.alert = alert
-        logger.emergency = emergency
-
-
-# Initialize custom log levels
-GCPLogger.setup_custom_levels()
+        self.cloud_logger.log_struct(log_entry)
