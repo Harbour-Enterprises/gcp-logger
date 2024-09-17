@@ -1,10 +1,10 @@
 # File: gcp_logger/__init__.py
 
-import json
 import logging
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Dict, Union
 
@@ -25,7 +25,7 @@ logging.addLevelName(ALERT, "ALERT")
 logging.addLevelName(EMERGENCY, "EMERGENCY")
 
 
-class LocalConsoleFormatter(logging.Formatter):
+class ConsoleColorFormatter(logging.Formatter):
     """
     Formatter for local development that adds color to log outputs.
     """
@@ -81,35 +81,121 @@ class LocalConsoleFormatter(logging.Formatter):
         )
 
 
-class CloudStructuredFormatter(logging.Formatter):
+class GCPLogFormatter(logging.Formatter):
     """
-    Formatter for Google Cloud environments that structures log records as JSON.
+    Formatter for Google Cloud environments that structures and sends log records to GCP.
     """
 
-    def __init__(self, gcp_logger_instance, *args, **kwargs):
+    SEVERITY_MAPPING = {
+        logging.DEBUG: "DEBUG",
+        logging.INFO: "INFO",
+        NOTICE: "NOTICE",
+        logging.WARNING: "WARNING",
+        logging.ERROR: "ERROR",
+        logging.CRITICAL: "CRITICAL",
+        ALERT: "ALERT",
+        logging.FATAL: "EMERGENCY",
+    }
+
+    MAX_LOG_SIZE = 255 * 1024  # 256KB max size for log messages in Google Cloud Logging
+
+    def __init__(self, environment, default_bucket, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.gcp_logger = gcp_logger_instance
+        self.environment = environment
+        self.default_bucket = default_bucket
+        self.gcp_logging_client = cloud_logging.Client()
+        self.gcp_logger = self.gcp_logging_client.logger("gcp_logger")
+        self.gcp_storage_client = storage.Client()
 
     def format(self, record):
-        # Convert the LogRecord to a dictionary
-        record_dict = {
-            "name": record.name,
-            "levelno": record.levelno,
-            "levelname": record.levelname,
-            "message": record.getMessage(),
-            "asctime": self.formatTime(record, self.datefmt),
-            "funcName": record.funcName,
-            "filename": record.filename,
-            "lineno": record.lineno,
-            "process": record.process,
-            "thread": record.thread,
-            "extra": record.__dict__,
+        formatted_message = self.format_log_message(record)
+        if len(formatted_message.encode("utf-8")) > self.MAX_LOG_SIZE:
+            gcs_uri = self.upload_large_log_to_gcs(formatted_message, record.__dict__)
+            formatted_message = self.truncate_log_message(formatted_message, gcs_uri)
+        self.send_log_to_gcp(record, formatted_message)
+        return formatted_message
+
+    def format_log_message(self, record):
+        log_format = (
+            "{instance_id} | {trace_id} | {span_id} | "
+            "{process_id} | {thread_id} | "
+            "{severity:<8} | "
+            "{logger_name}:{function}:{line} - "
+            "{message}"
+        )
+
+        extra = getattr(record, "extra", {})
+        return log_format.format(
+            instance_id=extra.get("instance_id", "-"),
+            trace_id=extra.get("trace_id", "-"),
+            span_id=extra.get("span_id", "-"),
+            process_id=record.process,
+            thread_id=record.thread,
+            severity=record.levelname,
+            logger_name=record.name,
+            function=record.funcName,
+            line=record.lineno,
+            message=record.getMessage(),
+        )
+
+    def send_log_to_gcp(self, record, formatted_message):
+        severity = self.SEVERITY_MAPPING.get(record.levelno, "DEFAULT")
+
+        log_entry = {
+            "message": formatted_message,
+            "severity": severity,
+            "time": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "instance_id": getattr(record, "instance_id", "-"),
+            "trace_id": getattr(record, "trace_id", "-"),
+            "span_id": getattr(record, "span_id", "-"),
+            "labels": {
+                "instance_id": getattr(record, "instance_id", "-"),
+                "environment": self.environment,
+            },
         }
-        structured_log = self.gcp_logger.google_cloud_log_format(record_dict)
-        return json.dumps(structured_log)
+
+        self.gcp_logger.log_struct(log_entry)
+
+    def upload_large_log_to_gcs(self, log_message: str, record_dict: dict) -> Union[str, None]:
+        storage_bucket = self.gcp_storage_client.bucket(self.default_bucket)
+        timestamp = int(time.time())
+
+        parts = [
+            timestamp,
+            record_dict.get("instance_id", "-"),
+            record_dict.get("trace_id", "-"),
+            record_dict.get("span_id", "-"),
+        ]
+        blob_name = "logs/" + "_".join(map(str, parts)) + ".log"
+        blob = storage_bucket.blob(blob_name)
+
+        try:
+            blob.upload_from_string(log_message)
+            return f"gs://{self.default_bucket}/{blob_name}"
+        except Exception as e:
+            print(f"Failed to upload log to GCS: {e}")  # Using print as we can't use the logger here
+            return None
+
+    def truncate_log_message(self, log_message: str, gcs_uri: str | None) -> str:
+        truncation_notice = "... [truncated]"
+        additional_text_template = "\nMessage has been truncated, please check: {gcs_uri} for full log message"
+
+        truncation_notice_length = len(truncation_notice.encode("utf-8"))
+        gcs_uri_length = len(gcs_uri.encode("utf-8")) if gcs_uri else 0
+        additional_text_length = len(additional_text_template.encode("utf-8")) - len("{gcs_uri}") + gcs_uri_length
+        max_message_length = self.MAX_LOG_SIZE - truncation_notice_length - additional_text_length
+
+        truncated_message = log_message.encode("utf-8")[:max_message_length].decode("utf-8", errors="ignore")
+
+        if gcs_uri:
+            truncated_message = f"{truncated_message}{truncation_notice}\nMessage has been truncated, please check: {gcs_uri} for full log message"
+        else:
+            truncated_message = f"{truncated_message}{truncation_notice}"
+
+        return truncated_message
 
 
-class CustomLoggerAdapter(logging.LoggerAdapter):
+class ContextAwareLogger(logging.LoggerAdapter):
     def process(self, msg, kwargs):
         extra = kwargs.get("extra", {})
         extra.update(self.extra)
@@ -145,169 +231,52 @@ class CustomLoggerAdapter(logging.LoggerAdapter):
 
 
 class GCPLogger:
-    PYTHON_LEVEL_TO_GCP_SEVERITY = {
-        logging.DEBUG: "DEBUG",
-        logging.INFO: "INFO",
-        NOTICE: "NOTICE",
-        logging.WARNING: "WARNING",
-        logging.ERROR: "ERROR",
-        logging.CRITICAL: "CRITICAL",
-        ALERT: "ALERT",
-        logging.FATAL: "EMERGENCY",
-    }
-
-    LOGGING_MAX_SIZE = 255 * 1024  # 256KB max size for log messages in Google Cloud Logging
-
     def __init__(self, environment: str, default_bucket: str = None, logger_name: str = "gcp_logger"):
         self.environment = environment
         self.default_bucket = default_bucket or os.getenv("GCP_DEFAULT_BUCKET")
-        self.instance_id = self._get_instance_id()
+        self.instance_id = self.get_instance_id()
         self.logger_name = logger_name
 
-        # Initialize Google Cloud clients
-        self.client = cloud_logging.Client()
-        self.cloud_logger = self.client.logger("gcp_logger")
+        self.base_logger = logging.getLogger(self.logger_name)
+        self.base_logger.setLevel(logging.DEBUG)
+        self.base_logger.propagate = False
+        self.configure_handlers()
 
-        self.logger = logging.getLogger(self.logger_name)
-        self.logger.setLevel(logging.DEBUG)  # Ensure we capture all log levels
-        self.logger.propagate = False  # Prevent double logging
-        self.setup_logging()
-
-        # Wrap logger with CustomLoggerAdapter after setup
-        self.logger = CustomLoggerAdapter(
-            self.logger, extra={"instance_id": self.instance_id, "trace_id": "-", "span_id": "-"}
+        self.logger = ContextAwareLogger(
+            self.base_logger, extra={"instance_id": self.instance_id, "trace_id": "-", "span_id": "-"}
         )
 
         print(f"Logger initialized with level: {self.logger.logger.level}")
         print(f"Logger handlers: {self.logger.logger.handlers}")
 
-    def _get_instance_id(self):
-        # Check for App Engine
+    def get_instance_id(self):
         if os.getenv("GAE_INSTANCE"):
             return os.getenv("GAE_INSTANCE")[:10]
-
-        # Check for Cloud Run
         elif os.getenv("K_SERVICE"):
             return f"{os.getenv('K_SERVICE')}-{os.getenv('K_REVISION')}"[:9]
-
-        # Check for Cloud Functions
         elif os.getenv("FUNCTION_NAME"):
             return os.getenv("FUNCTION_NAME")[:10]
-
-        # Default case
         else:
             return "-"
 
-    def setup_logging(self):
-        self.logger.setLevel(logging.DEBUG)  # Set to lowest level to capture all logs
+    def configure_handlers(self):
+        self.base_logger.setLevel(logging.DEBUG)
 
-        # Remove any existing handlers
-        for handler in self.logger.handlers[:]:
-            self.logger.removeHandler(handler)
+        for handler in self.base_logger.handlers[:]:
+            self.base_logger.removeHandler(handler)
 
         if self.environment in ["localdev", "unittest"]:
-            formatter = LocalConsoleFormatter(datefmt="%Y-%m-%d %H:%M:%S.%f")
+            formatter = ConsoleColorFormatter(datefmt="%Y-%m-%d %H:%M:%S.%f")
             console_handler = logging.StreamHandler(sys.stdout)
             console_handler.setFormatter(formatter)
-            self.logger.addHandler(console_handler)
+            self.base_logger.addHandler(console_handler)
         else:
-            # Use CloudStructuredFormatter for Google Cloud environments
-            formatter = CloudStructuredFormatter(self, datefmt="%Y-%m-%d %H:%M:%S")
+            formatter = GCPLogFormatter(
+                environment=self.environment, default_bucket=self.default_bucket, datefmt="%Y-%m-%d %H:%M:%S"
+            )
             stream_handler = logging.StreamHandler(sys.stdout)
             stream_handler.setFormatter(formatter)
-            self.logger.addHandler(stream_handler)
+            self.base_logger.addHandler(stream_handler)
 
     def get_logger(self):
         return self.logger
-
-    def log(self, level: int, message: str, **kwargs):
-        extra = {
-            "instance_id": self.instance_id,
-            "trace_id": kwargs.get("trace_id", "-"),
-            "span_id": kwargs.get("span_id", "-"),
-        }
-
-        if len(message.encode("utf-8")) > self.LOGGING_MAX_SIZE:
-            gsutil_uri = self.save_large_log_to_gcs(message, **extra)
-            message = self.google_cloud_log_truncate(message, gsutil_uri)
-
-        if self.environment in ["localdev", "unittest"]:
-            self.logger.log(level, message, extra=extra)
-        else:
-            self.google_cloud_log_sink(level, message, extra)
-
-    def google_cloud_log_format(self, record: dict) -> dict:
-        """
-        Formats the log record as a structured log entry.
-        """
-        custom_format = {
-            "instance_id": record["extra"].get("instance_id", "-"),
-            "trace_id": record["extra"].get("trace_id", "-"),
-            "span_id": record["extra"].get("span_id", "-"),
-            "process_id": record["process"],
-            "thread_id": record["thread"],
-            "severity": record["levelname"],  # Correctly mapping to 'severity'
-            "logger_name": record["name"],
-            "function": record["funcName"],
-            "line": record["lineno"],
-            "message": record["message"],
-            "timestamp": record["asctime"],
-        }
-
-        return custom_format
-
-    def google_cloud_log_truncate(self, log_message: str, gsutil_uri: str | None) -> str:
-        truncation_notice = "... [truncated]"
-        additional_text_template = "\nMessage has been truncated, please check: {gsutil_uri} for full log message"
-
-        truncation_notice_length = len(truncation_notice.encode("utf-8"))
-        gsutil_uri_length = len(gsutil_uri.encode("utf-8")) if gsutil_uri else 0
-        additional_text_length = len(additional_text_template.encode("utf-8")) - len("{gsutil_uri}") + gsutil_uri_length
-        max_message_length = self.LOGGING_MAX_SIZE - truncation_notice_length - additional_text_length
-
-        truncated_message = log_message.encode("utf-8")[:max_message_length].decode("utf-8", errors="ignore")
-
-        if gsutil_uri:
-            truncated_message = f"{truncated_message}{truncation_notice}\nMessage has been truncated, please check: {gsutil_uri} for full log message"
-        else:
-            truncated_message = f"{truncated_message}{truncation_notice}"
-
-        return truncated_message
-
-    def save_large_log_to_gcs(self, log_message: str, **kwargs) -> Union[str, None]:
-        storage_client = storage.Client()
-        storage_bucket = storage_client.bucket(self.default_bucket)
-        timestamp = int(time.time())
-
-        parts = [timestamp, kwargs.get("instance_id", "-"), kwargs.get("trace_id", "-"), kwargs.get("span_id", "-")]
-        blob_name = "logs/" + "_".join(map(str, parts)) + ".log"
-        blob = storage_bucket.blob(blob_name)
-
-        try:
-            blob.upload_from_string(log_message)
-            return f"gs://{self.default_bucket}/{blob_name}"
-        except Exception as e:
-            self.logger.error(f"Failed to upload log to GCS: {e}")
-            return None
-
-    def google_cloud_log_sink(self, level: int, message: str, extra: dict):
-        severity = self.PYTHON_LEVEL_TO_GCP_SEVERITY.get(level, "DEFAULT")
-
-        log_entry = {
-            "message": message,
-            "severity": severity,
-            "extra": extra,
-        }
-
-        # Add additional context that might be useful for GCP logging
-        log_entry["labels"] = {
-            "instance_id": extra.get("instance_id", "-"),
-            "environment": self.environment,
-        }
-
-        if extra.get("trace_id") != "-":
-            log_entry["trace"] = extra["trace_id"]
-        if extra.get("span_id") != "-":
-            log_entry["span_id"] = extra["span_id"]
-
-        self.cloud_logger.log_struct(log_entry)
