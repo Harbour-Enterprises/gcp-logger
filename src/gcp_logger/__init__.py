@@ -132,9 +132,9 @@ class GCPLogFormatter(logging.Formatter):
             process_id=record.process,
             thread_id=record.thread,
             severity=record.levelname,
-            logger_name=record.name,
-            function=record.funcName,
-            line=record.lineno,
+            logger_name=os.path.basename(extra.get("custom_filename", record.filename)).split(".")[0],
+            function=extra.get("custom_func", record.funcName),
+            line=extra.get("custom_lineno", record.lineno),
             message=record.getMessage(),
         )
 
@@ -199,20 +199,37 @@ class ContextAwareLogger(logging.LoggerAdapter):
     def process(self, msg, kwargs):
         extra = kwargs.get("extra", {})
         extra.update(self.extra)
+
+        # Get the caller's frame
+        frame = sys._getframe(2)
+
+        # Update extra with the caller's information
+        extra.update(
+            {
+                "custom_func": frame.f_code.co_name,
+                "custom_filename": frame.f_code.co_filename,
+                "custom_lineno": frame.f_lineno,
+            }
+        )
+
         kwargs["extra"] = extra
         return msg, kwargs
 
+    def _log_with_location(self, level, msg, *args, **kwargs):
+        # This method is no longer needed as we're capturing location in process()
+        self.log(level, msg, *args, **kwargs)
+
     def notice(self, msg, *args, **kwargs):
-        self.log(NOTICE, msg, *args, **kwargs)
+        self._log_with_location(NOTICE, msg, *args, **kwargs)
 
     def alert(self, msg, *args, **kwargs):
-        self.log(ALERT, msg, *args, **kwargs)
+        self._log_with_location(ALERT, msg, *args, **kwargs)
 
     def emergency(self, msg, *args, **kwargs):
-        self.log(EMERGENCY, msg, *args, **kwargs)
+        self._log_with_location(EMERGENCY, msg, *args, **kwargs)
 
     def success(self, msg, *args, **kwargs):
-        self.log(logging.INFO, f"SUCCESS: {msg}", *args, **kwargs)
+        self._log_with_location(logging.INFO, f"SUCCESS: {msg}", *args, **kwargs)
 
 
 class GCPLogger:
