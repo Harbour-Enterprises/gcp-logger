@@ -1,5 +1,6 @@
 # File: gcp_logger/__init__.py
 
+import json
 import logging
 import os
 import sys
@@ -24,7 +25,11 @@ logging.addLevelName(ALERT, "ALERT")
 logging.addLevelName(EMERGENCY, "EMERGENCY")
 
 
-class ColorizedFormatter(logging.Formatter):
+class LocalConsoleFormatter(logging.Formatter):
+    """
+    Formatter for local development that adds color to log outputs.
+    """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.color_codes = self._generate_color_codes()
@@ -76,6 +81,34 @@ class ColorizedFormatter(logging.Formatter):
         )
 
 
+class CloudStructuredFormatter(logging.Formatter):
+    """
+    Formatter for Google Cloud environments that structures log records as JSON.
+    """
+
+    def __init__(self, gcp_logger_instance, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.gcp_logger = gcp_logger_instance
+
+    def format(self, record):
+        # Convert the LogRecord to a dictionary
+        record_dict = {
+            "name": record.name,
+            "levelno": record.levelno,
+            "levelname": record.levelname,
+            "message": record.getMessage(),
+            "asctime": self.formatTime(record, self.datefmt),
+            "funcName": record.funcName,
+            "filename": record.filename,
+            "lineno": record.lineno,
+            "process": record.process,
+            "thread": record.thread,
+            "extra": record.__dict__,
+        }
+        structured_log = self.gcp_logger.google_cloud_log_format(record_dict)
+        return json.dumps(structured_log)
+
+
 class CustomLoggerAdapter(logging.LoggerAdapter):
     def process(self, msg, kwargs):
         extra = kwargs.get("extra", {})
@@ -125,16 +158,17 @@ class GCPLogger:
 
     LOGGING_MAX_SIZE = 255 * 1024  # 256KB max size for log messages in Google Cloud Logging
 
-    def __init__(self, environment: str, default_bucket: str = None):
+    def __init__(self, environment: str, default_bucket: str = None, logger_name: str = "gcp_logger"):
         self.environment = environment
         self.default_bucket = default_bucket or os.getenv("GCP_DEFAULT_BUCKET")
         self.instance_id = self._get_instance_id()
+        self.logger_name = logger_name
 
         # Initialize Google Cloud clients
         self.client = cloud_logging.Client()
         self.cloud_logger = self.client.logger("gcp_logger")
 
-        self.logger = logging.getLogger("gcp_logger")
+        self.logger = logging.getLogger(self.logger_name)
         self.logger.setLevel(logging.DEBUG)  # Ensure we capture all log levels
         self.logger.propagate = False  # Prevent double logging
         self.setup_logging()
@@ -167,14 +201,21 @@ class GCPLogger:
     def setup_logging(self):
         self.logger.setLevel(logging.DEBUG)  # Set to lowest level to capture all logs
 
+        # Remove any existing handlers
+        for handler in self.logger.handlers[:]:
+            self.logger.removeHandler(handler)
+
         if self.environment in ["localdev", "unittest"]:
-            formatter = ColorizedFormatter(datefmt="%Y-%m-%d %H:%M:%S.%f")
+            formatter = LocalConsoleFormatter(datefmt="%Y-%m-%d %H:%M:%S.%f")
             console_handler = logging.StreamHandler(sys.stdout)
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
         else:
-            gcp_handler = cloud_logging.handlers.CloudLoggingHandler(self.client)
-            self.logger.addHandler(gcp_handler)
+            # Use CloudStructuredFormatter for Google Cloud environments
+            formatter = CloudStructuredFormatter(self, datefmt="%Y-%m-%d %H:%M:%S")
+            stream_handler = logging.StreamHandler(sys.stdout)
+            stream_handler.setFormatter(formatter)
+            self.logger.addHandler(stream_handler)
 
     def get_logger(self):
         return self.logger
@@ -195,30 +236,25 @@ class GCPLogger:
         else:
             self.google_cloud_log_sink(level, message, extra)
 
-    @staticmethod
-    def google_cloud_log_format(record: dict) -> str:
-        custom_format = (
-            "{instance_id} | {trace_id} | {span_id} | "
-            "{process_id} | {thread_id} | "
-            "{level: <8} | "
-            "{name}:{function}:{line} - "
-            "{message}"
-        )
-
-        formatted_record = {
+    def google_cloud_log_format(self, record: dict) -> dict:
+        """
+        Formats the log record as a structured log entry.
+        """
+        custom_format = {
             "instance_id": record["extra"].get("instance_id", "-"),
             "trace_id": record["extra"].get("trace_id", "-"),
             "span_id": record["extra"].get("span_id", "-"),
-            "process_id": record["process"].id,
-            "thread_id": record["thread"].id,
-            "level": record["level"].name,
-            "name": record["name"],
-            "function": record["function"],
-            "line": record["line"],
+            "process_id": record["process"],
+            "thread_id": record["thread"],
+            "level": record["levelname"],
+            "logger_name": record["name"],
+            "function": record["funcName"],
+            "line": record["lineno"],
             "message": record["message"],
+            "timestamp": record["asctime"],
         }
 
-        return custom_format.format(**formatted_record)
+        return custom_format
 
     def google_cloud_log_truncate(self, log_message: str, gsutil_uri: str | None) -> str:
         truncation_notice = "... [truncated]"
