@@ -96,9 +96,8 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
         EMERGENCY: "EMERGENCY",
     }
 
-    def __init__(self, client, name="python", default_bucket=None, environment=None):
-        # Set use_structured_logging to False since we're using textPayload
-        super().__init__(client, name=name, use_structured_logging=False)
+    def __init__(self, client, default_bucket=None, environment=None):
+        super().__init__(client, name="gcp-logger")
         self.default_bucket = default_bucket
         self.environment = environment
         self.gcp_storage_client = storage.Client() if default_bucket else None
