@@ -112,7 +112,7 @@ class GCPLogFormatter(logging.Formatter):
         if len(formatted_message.encode("utf-8")) > self.MAX_LOG_SIZE:
             gcs_uri = self.upload_large_log_to_gcs(formatted_message, record.__dict__)
             formatted_message = self.truncate_log_message(formatted_message, gcs_uri)
-        return formatted_message
+        self.send_log_to_gcp(record, formatted_message)
 
     def format_log_message(self, record):
         log_format = (
@@ -136,6 +136,24 @@ class GCPLogFormatter(logging.Formatter):
             line=record.lineno,
             message=record.getMessage(),
         )
+
+    def send_log_to_gcp(self, record, formatted_message):
+        severity = self.SEVERITY_MAPPING.get(record.levelno, "DEFAULT")
+
+        log_entry = {
+            "message": formatted_message,
+            "severity": severity,
+            "time": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "instance_id": getattr(record, "instance_id", "-"),
+            "trace_id": getattr(record, "trace_id", "-"),
+            "span_id": getattr(record, "span_id", "-"),
+            "labels": {
+                "instance_id": getattr(record, "instance_id", "-"),
+                "environment": self.environment,
+            },
+        }
+
+        self.gcp_logger.log_struct(log_entry, severity=severity)
 
     def upload_large_log_to_gcs(self, log_message: str, record_dict: dict) -> Union[str, None]:
         storage_bucket = self.gcp_storage_client.bucket(self.default_bucket)
