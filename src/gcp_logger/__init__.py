@@ -16,9 +16,9 @@ from google.cloud.logging_v2.handlers import CloudLoggingHandler
 colorama = None
 
 # Define custom logging levels
-NOTICE = 25
-ALERT = 70
-EMERGENCY = 80
+NOTICE = 300
+ALERT = 700
+EMERGENCY = 800
 
 # Add custom levels
 logging.addLevelName(NOTICE, "NOTICE")
