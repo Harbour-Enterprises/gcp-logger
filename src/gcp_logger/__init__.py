@@ -113,7 +113,7 @@ class GCPLogFormatter(logging.Formatter):
             gcs_uri = self.upload_large_log_to_gcs(formatted_message, record.__dict__)
             formatted_message = self.truncate_log_message(formatted_message, gcs_uri)
         self.send_log_to_gcp(record, formatted_message)
-        return formatted_message
+        return ""  # Return an empty string to prevent logging to standard output
 
     def format_log_message(self, record):
         log_format = (
@@ -266,7 +266,7 @@ class GCPLogger:
             self.base_logger.removeHandler(handler)
 
         if self.environment in ["localdev", "unittest"]:
-            formatter = ConsoleColorFormatter(datefmt="%Y-%m-%d %H:%M:%S.%f")
+            formatter = ConsoleColorFormatter(datefmt="%Y-%m-%d %H:%M:%S")
             console_handler = logging.StreamHandler(sys.stdout)
             console_handler.setFormatter(formatter)
             self.base_logger.addHandler(console_handler)
