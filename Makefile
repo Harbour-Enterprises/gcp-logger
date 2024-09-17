@@ -20,7 +20,7 @@ debug:
 
 test:
 	@echo "\n> 🧪 Running tests...\n"
-	python -m pytest tests --cov=./ --cov-report=xml --cov-config=.coveragerc -m "not performance"
+	python -m pytest tests -vv --cov=./ --cov-report=xml --cov-config=.coveragerc -m "not performance"
 
 benchmark:
 	@echo "\n> 📊 Running performance tests...\n"

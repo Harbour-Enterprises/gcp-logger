@@ -246,7 +246,7 @@ class GCPLogger:
             "span_id": record["extra"].get("span_id", "-"),
             "process_id": record["process"],
             "thread_id": record["thread"],
-            "level": record["levelname"],
+            "severity": record["levelname"],  # Correctly mapping to 'severity'
             "logger_name": record["name"],
             "function": record["funcName"],
             "line": record["lineno"],

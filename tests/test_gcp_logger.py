@@ -48,7 +48,6 @@ def test_init(gcp_logger_instance):
 
 @pytest.mark.parametrize("environment", ["localdev", "unittest", "production"])
 def test_setup_logging(environment, mock_google_cloud):
-    mock_logging_instance, _ = mock_google_cloud
     gcp_logger = GCPLogger(environment=environment, default_bucket="test-bucket")
 
     # Check that handlers were added
@@ -69,7 +68,7 @@ def test_setup_logging(environment, mock_google_cloud):
 
 
 def test_save_large_log_to_gcs(mock_google_cloud, gcp_logger_instance):
-    mock_logging_instance, mock_storage_instance = mock_google_cloud
+    _, mock_storage_instance = mock_google_cloud
     mock_blob = mock_storage_instance.bucket.return_value.blob.return_value
 
     result = gcp_logger_instance.save_large_log_to_gcs(
@@ -120,61 +119,44 @@ def test_log_with_location(gcp_logger_instance):
         # Retrieve the actual LogRecord passed to handle
         log_record = mock_handle.call_args[0][0]
 
-        # Manually set the custom attributes as they would be set by the logger
-        log_record.custom_func = "test_log_with_location"
-        log_record.custom_filename = "test_gcp_logger.py"
-        log_record.custom_lineno = 113  # Adjust based on your test file
+        # Basic assertions
+        assert log_record.name == "gcp_logger"
+        assert log_record.levelno == logging.INFO
+        assert log_record.msg == "Test message"
+        assert "test_gcp_logger.py" in log_record.pathname
 
-        # Now perform the assertions
-        assert hasattr(log_record, "custom_func")
-        assert hasattr(log_record, "custom_filename")
-        assert hasattr(log_record, "custom_lineno")
-        assert log_record.custom_func == "test_log_with_location"
-        assert log_record.custom_filename == "test_gcp_logger.py"
-        assert log_record.custom_lineno == 113
+        # Add this assertion to check if the function name is captured somewhere
+        assert "test_log_with_location" in str(log_record.__dict__)
 
 
-def test_colorized_formatter():
-    # Since CloudStructuredFormatter requires a GCPLogger instance, we need to mock it
+def test_cloud_structured_formatter():
+    # Create a MagicMock for GCPLogger
     mock_gcp_logger = MagicMock()
+
+    # Initialize the formatter with the mocked GCPLogger
     formatter = CloudStructuredFormatter(mock_gcp_logger, datefmt="%Y-%m-%d %H:%M:%S")
 
-    # Create a real LogRecord object
-    log_record = logging.LogRecord(
-        name="test_logger",
-        level=logging.INFO,
-        pathname="test_gcp_logger.py",
-        lineno=42,
-        msg="Test message",
-        args=(),
-        exc_info=None,
-    )
+    # Patch the formatTime method to return a fixed timestamp
+    with patch.object(formatter, "formatTime", return_value="2024-09-17 12:34:56"):
+        # Create a real LogRecord object
+        log_record = logging.LogRecord(
+            name="test_logger",
+            level=logging.INFO,
+            pathname="test_gcp_logger.py",
+            lineno=42,
+            msg="Test message",
+            args=(),
+            exc_info=None,
+        )
 
-    # Set additional attributes
-    log_record.funcName = "test_func"
-    log_record.process = 1234
-    log_record.thread = 5678
-    log_record.trace_id = "trace-123"  # Assuming this is added by your logger
+        # Set additional attributes
+        log_record.funcName = "test_func"
+        log_record.process = 1234
+        log_record.thread = 5678
+        log_record.trace_id = "trace-123"
 
-    # Mock the google_cloud_log_format method to return a dict
-    mock_gcp_logger.google_cloud_log_format.return_value = {
-        "instance_id": "-",
-        "trace_id": "trace-123",
-        "span_id": "-",
-        "process_id": 1234,
-        "thread_id": 5678,
-        "level": "INFO",
-        "logger_name": "test_logger",
-        "function": "test_func",
-        "line": 42,
-        "message": "Test message",
-        "timestamp": "2024-09-17 12:34:56",
-    }
-
-    formatted_message = formatter.format(log_record)
-
-    expected_output = json.dumps(
-        {
+        # Mock the google_cloud_log_format method to return a predefined dict
+        mock_gcp_logger.google_cloud_log_format.return_value = {
             "instance_id": "-",
             "trace_id": "trace-123",
             "span_id": "-",
@@ -187,6 +169,26 @@ def test_colorized_formatter():
             "message": "Test message",
             "timestamp": "2024-09-17 12:34:56",
         }
-    )
 
-    assert formatted_message == expected_output
+        # Format the log record
+        formatted_message = formatter.format(log_record)
+
+        # Parse the formatted message back to a dict
+        actual_output = json.loads(formatted_message)
+
+        # Assert that the actual output matches the expected output
+        assert actual_output == mock_gcp_logger.google_cloud_log_format.return_value
+
+    # Verify that google_cloud_log_format was called correctly
+    mock_gcp_logger.google_cloud_log_format.assert_called_once()
+    call_args = mock_gcp_logger.google_cloud_log_format.call_args[0][0]
+    assert call_args["name"] == "test_logger"
+    assert call_args["levelno"] == logging.INFO
+    assert call_args["levelname"] == "INFO"
+    assert call_args["message"] == "Test message"
+    assert call_args["asctime"] == "2024-09-17 12:34:56"
+    assert call_args["funcName"] == "test_func"
+    assert call_args["filename"] == "test_gcp_logger.py"
+    assert call_args["lineno"] == 42
+    assert call_args["process"] == 1234
+    assert call_args["thread"] == 5678
