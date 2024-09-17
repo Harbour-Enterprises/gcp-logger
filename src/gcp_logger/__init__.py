@@ -97,16 +97,20 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
     }
 
     def __init__(self, client, name="python", default_bucket=None, environment=None):
-        super().__init__(client, name=name)
+        # Set use_structured_logging to False since we're using textPayload
+        super().__init__(client, name=name, use_structured_logging=False)
         self.default_bucket = default_bucket
         self.environment = environment
         self.gcp_storage_client = storage.Client() if default_bucket else None
 
     def emit(self, record):
-        # Add custom attributes to the record
+        # 1. Set the severity first
+        record.severity = self.CUSTOM_LOGGING_SEVERITY.get(record.levelno, "DEFAULT")
+
+        # 2. Add custom attributes to the record
         self.add_custom_attributes(record)
 
-        # Format the message
+        # 3. Format the message
         message = self.format_log_message(record)
 
         if len(message.encode("utf-8")) > self.MAX_LOG_SIZE:
@@ -121,11 +125,7 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
         record.msg = message
         record.args = ()
 
-        # Map the levelno to severity
-        severity = self.CUSTOM_LOGGING_SEVERITY.get(record.levelno, "DEFAULT")
-        record.severity = severity
-
-        # Proceed with the standard CloudLoggingHandler emit
+        # 4. Proceed with the standard CloudLoggingHandler emit
         super().emit(record)
 
     def add_custom_attributes(self, record):
