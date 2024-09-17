@@ -85,6 +85,17 @@ class ConsoleColorFormatter(logging.Formatter):
 class CustomCloudLoggingHandler(CloudLoggingHandler):
     MAX_LOG_SIZE = 255 * 1024  # 256KB
 
+    CUSTOM_LOGGING_SEVERITY = {
+        logging.DEBUG: "DEBUG",
+        logging.INFO: "INFO",
+        NOTICE: "NOTICE",
+        logging.WARNING: "WARNING",
+        logging.ERROR: "ERROR",
+        logging.CRITICAL: "CRITICAL",
+        ALERT: "ALERT",
+        EMERGENCY: "EMERGENCY",
+    }
+
     def __init__(self, client, name="python", default_bucket=None, environment=None):
         super().__init__(client, name=name)
         self.default_bucket = default_bucket
@@ -94,6 +105,7 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
     def emit(self, record):
         # Add custom attributes to the record
         self.add_custom_attributes(record)
+
         # Format the message
         message = self.format_log_message(record)
 
@@ -108,6 +120,10 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
         # Update the record's message to the formatted message
         record.msg = message
         record.args = ()
+
+        # Map the levelno to severity
+        severity = self.CUSTOM_LOGGING_SEVERITY.get(record.levelno, "DEFAULT")
+        record.severity = severity
 
         # Proceed with the standard CloudLoggingHandler emit
         super().emit(record)
