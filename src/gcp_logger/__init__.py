@@ -113,6 +113,7 @@ class GCPLogFormatter(logging.Formatter):
             gcs_uri = self.upload_large_log_to_gcs(formatted_message, record.__dict__)
             formatted_message = self.truncate_log_message(formatted_message, gcs_uri)
         self.send_log_to_gcp(record, formatted_message)
+        return ""
 
     def format_log_message(self, record):
         log_format = (
@@ -201,32 +202,17 @@ class ContextAwareLogger(logging.LoggerAdapter):
         kwargs["extra"] = extra
         return msg, kwargs
 
-    def _log_with_location(self, level, msg, *args, **kwargs):
-        # Get caller's frame
-        frame = sys._getframe(2)
-        # Create a new dict for extra to avoid modifying the existing one
-        new_extra = {
-            "custom_func": frame.f_code.co_name,
-            "custom_filename": frame.f_code.co_filename,
-            "custom_lineno": frame.f_lineno,
-        }
-        if "extra" in kwargs:
-            kwargs["extra"].update(new_extra)
-        else:
-            kwargs["extra"] = new_extra
-        self.log(level, msg, *args, **kwargs)
-
     def notice(self, msg, *args, **kwargs):
-        self._log_with_location(NOTICE, msg, *args, **kwargs)
+        self.log(NOTICE, msg, *args, **kwargs)
 
     def alert(self, msg, *args, **kwargs):
-        self._log_with_location(ALERT, msg, *args, **kwargs)
+        self.log(ALERT, msg, *args, **kwargs)
 
     def emergency(self, msg, *args, **kwargs):
-        self._log_with_location(EMERGENCY, msg, *args, **kwargs)
+        self.log(EMERGENCY, msg, *args, **kwargs)
 
     def success(self, msg, *args, **kwargs):
-        self._log_with_location(logging.INFO, f"SUCCESS: {msg}", *args, **kwargs)
+        self.log(logging.INFO, f"SUCCESS: {msg}", *args, **kwargs)
 
 
 class GCPLogger:
