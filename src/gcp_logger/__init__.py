@@ -1,5 +1,6 @@
 # File: gcp_logger/__init__.py
 
+import inspect
 import logging
 import os
 import sys
@@ -61,12 +62,12 @@ class ConsoleColorFormatter(logging.Formatter):
         formatted_time = colorama.Fore.GREEN + self.formatTime(record, self.datefmt) + reset
         formatted_level = color_code + f"{record.levelname:<8}" + reset
 
-        # Use the custom fields if available, otherwise fall back to the standard ones
+        # Use the custom fields from record
         func = getattr(record, "custom_func", record.funcName)
-        filename = getattr(record, "custom_filename", record.filename)
+        filename = os.path.basename(getattr(record, "custom_filename", record.filename)).split(".")[0]
         lineno = getattr(record, "custom_lineno", record.lineno)
 
-        formatted_name = colorama.Fore.CYAN + f"{record.name}:{func}:{lineno}" + reset
+        formatted_name = colorama.Fore.CYAN + f"{filename}:{func}:{lineno}" + reset
         formatted_message = color_code + record.getMessage() + reset
 
         # Access extra info from record.__dict__
@@ -132,9 +133,9 @@ class GCPLogFormatter(logging.Formatter):
             process_id=record.process,
             thread_id=record.thread,
             severity=record.levelname,
-            logger_name=os.path.basename(extra.get("custom_filename", record.filename)).split(".")[0],
-            function=extra.get("custom_func", record.funcName),
-            line=extra.get("custom_lineno", record.lineno),
+            logger_name=os.path.basename(getattr(record, "custom_filename", record.filename)).split(".")[0],
+            function=getattr(record, "custom_func", record.funcName),
+            line=getattr(record, "custom_lineno", record.lineno),
             message=record.getMessage(),
         )
 
@@ -195,41 +196,59 @@ class GCPLogFormatter(logging.Formatter):
         return truncated_message
 
 
-class ContextAwareLogger(logging.LoggerAdapter):
+class ContextAwareLogger(logging.Logger):
+    def _log(self, level, msg, args, exc_info=None, extra=None, stack_info=False, stacklevel=1):
+        # Find the first frame outside of the logging module
+        frame = inspect.currentframe()
+        while frame and (
+            frame.f_code.co_filename.endswith("logging/__init__.py")
+            or frame.f_code.co_filename.endswith("gcp_logger/__init__.py")
+        ):
+            frame = frame.f_back
+
+        if frame:
+            extra = extra or {}
+            extra.update(
+                {
+                    "custom_filename": frame.f_code.co_filename,
+                    "custom_lineno": frame.f_lineno,
+                    "custom_func": frame.f_code.co_name,
+                }
+            )
+
+        super()._log(level, msg, args, exc_info, extra, stack_info, stacklevel)
+
+    def notice(self, msg, *args, **kwargs):
+        self.log(NOTICE, msg, *args, **kwargs)
+
+    def alert(self, msg, *args, **kwargs):
+        self.log(ALERT, msg, *args, **kwargs)
+
+    def emergency(self, msg, *args, **kwargs):
+        self.log(EMERGENCY, msg, *args, **kwargs)
+
+    def success(self, msg, *args, **kwargs):
+        self.info(f"SUCCESS: {msg}", *args, **kwargs)
+
+
+class GCPLoggerAdapter(logging.LoggerAdapter):
     def process(self, msg, kwargs):
         extra = kwargs.get("extra", {})
         extra.update(self.extra)
-
-        # Get the caller's frame
-        frame = sys._getframe(2)
-
-        # Update extra with the caller's information
-        extra.update(
-            {
-                "custom_func": frame.f_code.co_name,
-                "custom_filename": frame.f_code.co_filename,
-                "custom_lineno": frame.f_lineno,
-            }
-        )
-
         kwargs["extra"] = extra
         return msg, kwargs
 
-    def _log_with_location(self, level, msg, *args, **kwargs):
-        # This method is no longer needed as we're capturing location in process()
-        self.log(level, msg, *args, **kwargs)
-
     def notice(self, msg, *args, **kwargs):
-        self._log_with_location(NOTICE, msg, *args, **kwargs)
+        self.log(NOTICE, msg, *args, **kwargs)
 
     def alert(self, msg, *args, **kwargs):
-        self._log_with_location(ALERT, msg, *args, **kwargs)
+        self.log(ALERT, msg, *args, **kwargs)
 
     def emergency(self, msg, *args, **kwargs):
-        self._log_with_location(EMERGENCY, msg, *args, **kwargs)
+        self.log(EMERGENCY, msg, *args, **kwargs)
 
     def success(self, msg, *args, **kwargs):
-        self._log_with_location(logging.INFO, f"SUCCESS: {msg}", *args, **kwargs)
+        self.info(f"SUCCESS: {msg}", *args, **kwargs)
 
 
 class GCPLogger:
@@ -239,13 +258,18 @@ class GCPLogger:
         self.instance_id = self.get_instance_id()
         self.logger_name = logger_name
 
-        self.base_logger = logging.getLogger(self.logger_name)
-        self.base_logger.setLevel(logging.DEBUG)
-        self.base_logger.propagate = False
+        # Use our custom ContextAwareLogger class
+        logging.setLoggerClass(ContextAwareLogger)
+        self.logger = logging.getLogger(self.logger_name)
+        logging.setLoggerClass(logging.Logger)  # Reset to default Logger class
+
+        self.logger.setLevel(logging.DEBUG)
+        self.logger.propagate = False
         self.configure_handlers()
 
-        self.logger = ContextAwareLogger(
-            self.base_logger, extra={"instance_id": self.instance_id, "trace_id": "-", "span_id": "-"}
+        # Use GCPLoggerAdapter
+        self.logger = GCPLoggerAdapter(
+            self.logger, extra={"instance_id": self.instance_id, "trace_id": "-", "span_id": "-"}
         )
 
         print(f"Logger initialized with level: {self.logger.logger.level}")
@@ -262,23 +286,23 @@ class GCPLogger:
             return "-"
 
     def configure_handlers(self):
-        self.base_logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(logging.DEBUG)
 
-        for handler in self.base_logger.handlers[:]:
-            self.base_logger.removeHandler(handler)
+        for handler in self.logger.handlers[:]:
+            self.logger.removeHandler(handler)
 
         if self.environment in ["localdev", "unittest"]:
             formatter = ConsoleColorFormatter(datefmt="%Y-%m-%d %H:%M:%S")
             console_handler = logging.StreamHandler(sys.stdout)
             console_handler.setFormatter(formatter)
-            self.base_logger.addHandler(console_handler)
+            self.logger.addHandler(console_handler)
         else:
             formatter = GCPLogFormatter(
                 environment=self.environment, default_bucket=self.default_bucket, datefmt="%Y-%m-%d %H:%M:%S"
             )
             stream_handler = logging.StreamHandler(sys.stdout)
             stream_handler.setFormatter(formatter)
-            self.base_logger.addHandler(stream_handler)
+            self.logger.addHandler(stream_handler)
 
     def get_logger(self):
         return self.logger
