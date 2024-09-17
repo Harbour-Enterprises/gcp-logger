@@ -49,7 +49,9 @@ def gcp_logger_instance(mock_google_cloud):
         return GCPLogger(environment="unittest", default_bucket="test-bucket")
 
 
-def test_get_instance_id():
+@patch("google.cloud.logging.Client")
+@patch("google.cloud.storage.Client")
+def test_get_instance_id(mock_storage_client, mock_logging_client):
     with patch.dict(
         os.environ, {"GAE_INSTANCE": "gae-instance-123", "GOOGLE_CLOUD_PROJECT": "test-project"}, clear=True
     ):
