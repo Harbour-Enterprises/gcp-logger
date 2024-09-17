@@ -1,194 +1,254 @@
 # File: tests/test_gcp_logger.py
 
-import json
 import logging
-from unittest.mock import ANY, MagicMock, patch
+import os
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.gcp_logger import ALERT, EMERGENCY, NOTICE, CloudStructuredFormatter, GCPLogger, LocalConsoleFormatter
+from src.gcp_logger import (
+    ALERT,
+    EMERGENCY,
+    NOTICE,
+    ConsoleColorFormatter,
+    ContextAwareLogger,
+    CustomCloudLoggingHandler,
+    GCPLogger,
+)
+
+
+class TestHandler(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.reset()
+
+    def reset(self):
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
 
 
 @pytest.fixture
 def mock_google_cloud():
-    with patch("google.cloud.logging.Client") as mock_logging, patch("google.cloud.storage.Client") as mock_storage:
+    with patch("google.cloud.logging.Client") as mock_logging, patch(
+        "google.cloud.storage.Client"
+    ) as mock_storage, patch("google.cloud.logging_v2.handlers.CloudLoggingHandler") as mock_cloud_handler:
         mock_logging_instance = MagicMock()
-        mock_logging.return_value = mock_logging_instance
         mock_storage_instance = MagicMock()
+        mock_cloud_handler_instance = MagicMock()
+        mock_logging.return_value = mock_logging_instance
         mock_storage.return_value = mock_storage_instance
-        yield mock_logging_instance, mock_storage_instance
+        mock_cloud_handler.return_value = mock_cloud_handler_instance
+        yield mock_logging_instance, mock_storage_instance, mock_cloud_handler_instance
 
 
 @pytest.fixture
 def gcp_logger_instance(mock_google_cloud):
-    return GCPLogger(environment="unittest", default_bucket="test-bucket")
+    with patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": "test-project"}):
+        return GCPLogger(environment="unittest", default_bucket="test-bucket")
 
 
-@pytest.mark.parametrize(
-    "env_var, expected_id",
-    [
-        ({"GAE_INSTANCE": "gae-instance-123"}, "gae-instan"),
-        ({"K_SERVICE": "run-service", "K_REVISION": "revision-123"}, "run-servi"),
-        ({"FUNCTION_NAME": "cloud-function-name"}, "cloud-func"),
-        ({}, "-"),
-    ],
-)
-def test_get_instance_id(env_var, expected_id, mock_google_cloud):
-    with patch.dict("os.environ", env_var, clear=True):
-        gcp_logger = GCPLogger(environment="production", default_bucket="test-bucket")
-        assert gcp_logger.instance_id == expected_id
+def test_get_instance_id():
+    with patch.dict(
+        os.environ, {"GAE_INSTANCE": "gae-instance-123", "GOOGLE_CLOUD_PROJECT": "test-project"}, clear=True
+    ):
+        logger = GCPLogger(environment="production")
+        assert logger.instance_id == "gae-instan"
+
+    with patch.dict(
+        os.environ,
+        {"K_SERVICE": "run-service", "K_REVISION": "revision-123", "GOOGLE_CLOUD_PROJECT": "test-project"},
+        clear=True,
+    ):
+        logger = GCPLogger(environment="production")
+        assert logger.instance_id == "run-servi"
+
+    with patch.dict(
+        os.environ, {"FUNCTION_NAME": "cloud-function-name", "GOOGLE_CLOUD_PROJECT": "test-project"}, clear=True
+    ):
+        logger = GCPLogger(environment="production")
+        assert logger.instance_id == "cloud-func"
+
+    with patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": "test-project"}, clear=True):
+        logger = GCPLogger(environment="production")
+        assert logger.instance_id == "-"
 
 
-def test_init(gcp_logger_instance):
-    assert gcp_logger_instance is not None
+def test_gcp_logger_initialization(gcp_logger_instance):
     assert gcp_logger_instance.environment == "unittest"
     assert gcp_logger_instance.default_bucket == "test-bucket"
-    assert gcp_logger_instance.instance_id == "-"  # Default value for non-cloud environments
+    assert gcp_logger_instance.instance_id == "-"
+    assert isinstance(gcp_logger_instance.logger, logging.LoggerAdapter)
 
 
 @pytest.mark.parametrize("environment", ["localdev", "unittest", "production"])
-def test_setup_logging(environment, mock_google_cloud):
-    gcp_logger = GCPLogger(environment=environment, default_bucket="test-bucket")
-
-    # Check that handlers were added
-    assert gcp_logger.logger.logger.handlers
+def test_configure_handlers(environment, mock_google_cloud):
+    logger = GCPLogger(environment=environment, default_bucket="test-bucket")
+    assert logger.logger.logger.handlers
 
     if environment in ["localdev", "unittest"]:
-        # Expect a StreamHandler with LocalConsoleFormatter
-        assert any(
-            isinstance(handler, logging.StreamHandler) and isinstance(handler.formatter, LocalConsoleFormatter)
-            for handler in gcp_logger.logger.logger.handlers
-        )
+        assert any(isinstance(h, logging.StreamHandler) for h in logger.logger.logger.handlers)
+        assert any(isinstance(h.formatter, ConsoleColorFormatter) for h in logger.logger.logger.handlers)
     else:
-        # Expect a StreamHandler with CloudStructuredFormatter
-        assert any(
-            isinstance(handler, logging.StreamHandler) and isinstance(handler.formatter, CloudStructuredFormatter)
-            for handler in gcp_logger.logger.logger.handlers
-        )
+        assert any(isinstance(h, CustomCloudLoggingHandler) for h in logger.logger.logger.handlers)
 
 
-def test_save_large_log_to_gcs(mock_google_cloud, gcp_logger_instance):
-    _, mock_storage_instance = mock_google_cloud
-    mock_blob = mock_storage_instance.bucket.return_value.blob.return_value
-
-    result = gcp_logger_instance.save_large_log_to_gcs(
-        "Large log message", instance_id="instance", trace_id="trace", span_id="span"
-    )
-
-    assert result.startswith("gs://test-bucket/logs/")
-    mock_blob.upload_from_string.assert_called_once_with("Large log message")
-
-
-def test_google_cloud_log_sink(gcp_logger_instance):
-    mock_cloud_logger = MagicMock()
-    gcp_logger_instance.cloud_logger = mock_cloud_logger
-
-    gcp_logger_instance.google_cloud_log_sink(
-        logging.INFO, "Test message", {"instance_id": "test", "trace_id": "trace", "span_id": "span"}
-    )
-
-    mock_cloud_logger.log_struct.assert_called_once()
-    log_entry = mock_cloud_logger.log_struct.call_args[0][0]
-
-    assert log_entry["severity"] == "INFO"
-    assert log_entry["message"] == "Test message"
-    assert log_entry["labels"]["instance_id"] == "test"
-    assert log_entry["trace"] == "trace"
-    assert log_entry["span_id"] == "span"
+def test_console_color_formatter():
+    formatter = ConsoleColorFormatter()
+    record = logging.LogRecord("test_logger", logging.INFO, "test_file.py", 42, "Test message", (), None)
+    record.trace_id = "test-trace"
+    formatted = formatter.format(record)
+    assert "INFO" in formatted
+    assert "test_file:None:42" in formatted  # Updated this line
+    assert "Test message" in formatted
+    assert "test-trace" in formatted
 
 
-def test_custom_log_levels(gcp_logger_instance):
-    with patch.object(gcp_logger_instance.logger, "log") as mock_log:
+def test_custom_cloud_logging_handler(mock_google_cloud):
+    mock_logging, mock_storage, mock_cloud_handler = mock_google_cloud
+
+    # Create a mock CloudLoggingHandler
+    mock_cloud_handler_instance = MagicMock()
+    mock_cloud_handler.return_value = mock_cloud_handler_instance
+
+    # Set up the resource attribute
+    mock_cloud_handler_instance.resource = MagicMock()
+    mock_cloud_handler_instance.labels = {}
+    mock_cloud_handler_instance.trace = None
+    mock_cloud_handler_instance.span_id = None
+
+    # Mock the background thread worker
+    mock_worker = MagicMock()
+    mock_worker.enqueue = MagicMock()
+
+    # Create the CustomCloudLoggingHandler with the mock
+    with patch("google.cloud.logging_v2.handlers.transports.background_thread._Worker", return_value=mock_worker):
+        handler = CustomCloudLoggingHandler(mock_logging, default_bucket="test-bucket", environment="production")
+
+    # Create a LogRecord and add all necessary attributes
+    record = logging.LogRecord("test_logger", logging.INFO, "test_file.py", 42, "Test message", (), None)
+    record._resource = MagicMock()
+    record._labels = {}
+    record._trace = None
+    record._span_id = None
+    record.trace = None
+    record.span_id = None
+    record._trace_sampled = None
+    record._http_request = None
+    record._source_location = None
+
+    # Call emit
+    handler.emit(record)
+
+    # Verify that the worker's enqueue method was called
+    mock_worker.enqueue.assert_called_once()
+
+    # Verify that the custom attributes were added
+    assert hasattr(record, "severity")
+    assert record.severity == "INFO"
+    assert hasattr(record, "instance_id")
+    assert hasattr(record, "trace_id")
+    assert hasattr(record, "span_id")
+    assert hasattr(record, "environment")
+    assert record.environment == "production"
+
+    # Check if the message was formatted
+    assert "test_file:None:42" in record.msg
+
+
+def test_gcp_logger_adapter_custom_levels(gcp_logger_instance):
+    with patch.object(gcp_logger_instance.logger.logger, "log") as mock_log:
         gcp_logger_instance.logger.notice("Test notice")
-        mock_log.assert_called_with(NOTICE, "Test notice", extra=ANY)
+        mock_log.assert_called_with(NOTICE, "Test notice", extra={"instance_id": "-", "trace_id": "-", "span_id": "-"})
 
         gcp_logger_instance.logger.alert("Test alert")
-        mock_log.assert_called_with(ALERT, "Test alert", extra=ANY)
+        mock_log.assert_called_with(ALERT, "Test alert", extra={"instance_id": "-", "trace_id": "-", "span_id": "-"})
 
         gcp_logger_instance.logger.emergency("Test emergency")
-        mock_log.assert_called_with(EMERGENCY, "Test emergency", extra=ANY)
-
-        gcp_logger_instance.logger.success("Test success")
-        mock_log.assert_called_with(logging.INFO, "SUCCESS: Test success", extra=ANY)
-
-
-def test_log_with_location(gcp_logger_instance):
-    with patch.object(gcp_logger_instance.logger.logger, "handle") as mock_handle:
-        gcp_logger_instance.logger.info("Test message")
-
-        # Retrieve the actual LogRecord passed to handle
-        log_record = mock_handle.call_args[0][0]
-
-        # Basic assertions
-        assert log_record.name == "gcp_logger"
-        assert log_record.levelno == logging.INFO
-        assert log_record.msg == "Test message"
-        assert "test_gcp_logger.py" in log_record.pathname
-
-        # Add this assertion to check if the function name is captured somewhere
-        assert "test_log_with_location" in str(log_record.__dict__)
-
-
-def test_cloud_structured_formatter():
-    # Create a MagicMock for GCPLogger
-    mock_gcp_logger = MagicMock()
-
-    # Initialize the formatter with the mocked GCPLogger
-    formatter = CloudStructuredFormatter(mock_gcp_logger, datefmt="%Y-%m-%d %H:%M:%S")
-
-    # Patch the formatTime method to return a fixed timestamp
-    with patch.object(formatter, "formatTime", return_value="2024-09-17 12:34:56"):
-        # Create a real LogRecord object
-        log_record = logging.LogRecord(
-            name="test_logger",
-            level=logging.INFO,
-            pathname="test_gcp_logger.py",
-            lineno=42,
-            msg="Test message",
-            args=(),
-            exc_info=None,
+        mock_log.assert_called_with(
+            EMERGENCY, "Test emergency", extra={"instance_id": "-", "trace_id": "-", "span_id": "-"}
         )
 
-        # Set additional attributes
-        log_record.funcName = "test_func"
-        log_record.process = 1234
-        log_record.thread = 5678
-        log_record.trace_id = "trace-123"
+        gcp_logger_instance.logger.success("Test success")
+        mock_log.assert_called_with(
+            logging.INFO, "SUCCESS: Test success", extra={"instance_id": "-", "trace_id": "-", "span_id": "-"}
+        )
 
-        # Mock the google_cloud_log_format method to return a predefined dict
-        mock_gcp_logger.google_cloud_log_format.return_value = {
-            "instance_id": "-",
-            "trace_id": "trace-123",
-            "span_id": "-",
-            "process_id": 1234,
-            "thread_id": 5678,
-            "level": "INFO",
-            "logger_name": "test_logger",
-            "function": "test_func",
-            "line": 42,
-            "message": "Test message",
-            "timestamp": "2024-09-17 12:34:56",
-        }
 
-        # Format the log record
-        formatted_message = formatter.format(log_record)
+def test_context_aware_logger():
+    logging.setLoggerClass(ContextAwareLogger)
+    logger = logging.getLogger("test_context_aware")
 
-        # Parse the formatted message back to a dict
-        actual_output = json.loads(formatted_message)
+    # Remove any existing handlers and set the level to INFO
+    logger.handlers = []
+    logger.setLevel(logging.INFO)
 
-        # Assert that the actual output matches the expected output
-        assert actual_output == mock_gcp_logger.google_cloud_log_format.return_value
+    # Add our test handler
+    test_handler = TestHandler()
+    logger.addHandler(test_handler)
 
-    # Verify that google_cloud_log_format was called correctly
-    mock_gcp_logger.google_cloud_log_format.assert_called_once()
-    call_args = mock_gcp_logger.google_cloud_log_format.call_args[0][0]
-    assert call_args["name"] == "test_logger"
-    assert call_args["levelno"] == logging.INFO
-    assert call_args["levelname"] == "INFO"
-    assert call_args["message"] == "Test message"
-    assert call_args["asctime"] == "2024-09-17 12:34:56"
-    assert call_args["funcName"] == "test_func"
-    assert call_args["filename"] == "test_gcp_logger.py"
-    assert call_args["lineno"] == 42
-    assert call_args["process"] == 1234
-    assert call_args["thread"] == 5678
+    # Log a message
+    logger.info("Test message")
+
+    # Check if a record was logged
+    assert len(test_handler.records) == 1, "Expected one log record, but got {len(test_handler.records)}"
+
+    # Get the log record
+    record = test_handler.records[0]
+
+    # Check for custom attributes
+    assert hasattr(record, "custom_filename"), "Expected 'custom_filename' attribute, but it wasn't present"
+    assert hasattr(record, "custom_lineno"), "Expected 'custom_lineno' attribute, but it wasn't present"
+    assert hasattr(record, "custom_func"), "Expected 'custom_func' attribute, but it wasn't present"
+
+    # Check the values of custom attributes
+    assert record.custom_filename.endswith("test_gcp_logger.py"), f"Unexpected filename: {record.custom_filename}"
+    assert isinstance(
+        record.custom_lineno, int
+    ), f"Expected lineno to be an integer, but got {type(record.custom_lineno)}"
+    assert record.custom_func == "test_context_aware_logger", f"Unexpected function name: {record.custom_func}"
+
+    # Check the log message
+    assert record.msg == "Test message", f"Unexpected log message: {record.msg}"
+
+
+def test_large_log_message_handling(mock_google_cloud):
+    mock_logging, mock_storage, mock_cloud_handler = mock_google_cloud
+
+    # Mock the background thread worker
+    mock_worker = MagicMock()
+    mock_worker.enqueue = MagicMock()
+
+    # Create the CustomCloudLoggingHandler with the mock
+    with patch("google.cloud.logging_v2.handlers.transports.background_thread._Worker", return_value=mock_worker):
+        handler = CustomCloudLoggingHandler(mock_logging, default_bucket="test-bucket", environment="production")
+
+    large_message = "A" * (handler.MAX_LOG_SIZE + 1000)
+    record = logging.LogRecord("test_logger", logging.INFO, "test_file.py", 42, large_message, (), None)
+
+    # Add necessary attributes to the LogRecord
+    record._resource = MagicMock()
+    record._labels = {}
+    record._trace = None
+    record._span_id = None
+    record._trace_sampled = None
+    record._http_request = None
+    record._source_location = None
+
+    with patch.object(handler, "upload_large_log_to_gcs", return_value="gs://test-bucket/logs/test.log"):
+        handler.emit(record)
+
+    # Verify that the worker's enqueue method was called
+    mock_worker.enqueue.assert_called_once()
+
+    # Get the args passed to enqueue
+    call_args = mock_worker.enqueue.call_args[0]
+    assert len(call_args) >= 2, "Expected at least 2 arguments passed to enqueue"
+
+    # The second argument should be the formatted message
+    formatted_message = call_args[1]
+
+    assert len(formatted_message.encode("utf-8")) <= handler.MAX_LOG_SIZE, "Message exceeds maximum size"
+    assert "Message has been truncated" in formatted_message
+    assert "gs://test-bucket/logs/test.log" in formatted_message
