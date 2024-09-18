@@ -41,6 +41,35 @@ logger.error("This is an error log")
 
 For more examples, see the `examples/` directory.
 
+## Comparison with Other Logging Libraries
+
+GCPLogger combines the best features of popular Python logging libraries with native Google Cloud Platform integration. Here's how it compares to other logging solutions:
+
+| Feature                   | GCP Logger | Loguru | FastLogging | stdlib logging |
+|---------------------------|------------|--------|-------------|----------------|
+| GCP Integration           | ✅         | ❌     | ❌          | ❌             |
+| Custom Log Levels         | ✅         | ✅     | ❌          | ✅             |
+| Colorized Console Output  | ✅         | ✅     | ❌          | ❌             |
+| Structured Logging        | ✅         | ✅     | ✅          | ❌             |
+| Async Support             | ✅         | ✅     | ✅          | ❌             |
+| Instance ID Capture       | ✅         | ❌     | ❌          | ❌             |
+| Trace/Span ID Support     | ✅         | ❌     | ❌          | ❌             |
+| Large Message Handling    | ✅         | ❌     | ❌          | ❌             |
+| Performance (High Volume) | Good       | Good   | Excellent   | Fair           |
+| Memory Usage              | Low        | Low    | Very Low    | Low            |
+| Ease of Use               | High       | High   | Medium      | Medium         |
+| Cloud-Native Design       | ✅         | ❌     | ❌          | ❌             |
+
+### Key Advantages of GCP Logger
+
+1. **Native GCP Integration**: Seamlessly works with Google Cloud Logging and other GCP services.
+2. **Cloud-Native Features**: Automatic capture of Instance ID, support for Trace and Span IDs.
+3. **Flexible Log Levels**: Includes custom levels like NOTICE, ALERT, and EMERGENCY.
+4. **Large Message Handling**: Efficiently manages oversized log messages via Google Cloud Storage.
+5. **Development-Friendly**: Offers colorized console output for improved readability during local development.
+6. **Balanced Performance**: Maintains good performance in both normal and high-volume scenarios.
+7. **Comprehensive Logging Solution**: Combines the best features of popular logging libraries with GCP-specific enhancements.
+
 ## Development
 
 To set up the development environment:
