@@ -1,6 +1,6 @@
 # 💾 GCPLogger
 
-Version: 0.0.19
+Version: 0.1.0
 
 GCPLogger is a Python package that provides a flexible and powerful logging solution, integrating with Google Cloud Logging and supporting various environments.
 
