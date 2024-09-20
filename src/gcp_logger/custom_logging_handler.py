@@ -71,7 +71,8 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
 
         if len(message.encode("utf-8")) > self.MAX_LOG_SIZE and self.async_uploader:
             # Upload the full message to GCS asynchronously
-            gcs_uri = self.upload_large_log_to_gcs(message, record.__dict__)
+            raw_message = record.getMessage()
+            gcs_uri = self.upload_large_log_to_gcs(raw_message, record.__dict__)
             # Truncate the message and include the GCS URI
             message = self.truncate_log_message(message, gcs_uri)
 
