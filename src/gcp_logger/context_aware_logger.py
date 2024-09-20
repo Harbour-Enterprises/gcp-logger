@@ -3,6 +3,8 @@
 import inspect
 import logging
 
+from .levels import ALERT, EMERGENCY, NOTICE
+
 
 class ContextAwareLogger(logging.Logger):
     def _log(self, level, msg, args, exc_info=None, extra=None, stack_info=False, stacklevel=1):
@@ -37,6 +39,14 @@ class ContextAwareLogger(logging.Logger):
 
         super()._log(level, msg, args, exc_info, extra, stack_info, stacklevel)
 
+    def log(self, level, msg, *args, **kwargs):
+        if self.isEnabledFor(level):
+            # Ensure that exc_info, extra, and stack_info are always passed
+            exc_info = kwargs.get("exc_info", None)
+            extra = kwargs.get("extra", None)
+            stack_info = kwargs.get("stack_info", False)
+            self._log(level, msg, args, exc_info, extra, stack_info)
+
     def notice(self, msg, *args, **kwargs):
         """
         Logs a message with NOTICE level.
@@ -44,7 +54,7 @@ class ContextAwareLogger(logging.Logger):
         Args:
             msg (str): The log message.
         """
-        self.log(logging.NOTICE, msg, *args, **kwargs)
+        self.log(NOTICE, msg, *args, **kwargs)
 
     def alert(self, msg, *args, **kwargs):
         """
@@ -53,7 +63,7 @@ class ContextAwareLogger(logging.Logger):
         Args:
             msg (str): The log message.
         """
-        self.log(logging.ALERT, msg, *args, **kwargs)
+        self.log(ALERT, msg, *args, **kwargs)
 
     def emergency(self, msg, *args, **kwargs):
         """
@@ -62,7 +72,7 @@ class ContextAwareLogger(logging.Logger):
         Args:
             msg (str): The log message.
         """
-        self.log(logging.EMERGENCY, msg, *args, **kwargs)
+        self.log(EMERGENCY, msg, *args, **kwargs)
 
     def success(self, msg, *args, **kwargs):
         """

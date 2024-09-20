@@ -49,10 +49,7 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
         # Initialize AsyncUploader for uploading large logs
         if self.default_bucket:
             self.async_uploader = AsyncUploader(bucket_name=self.default_bucket)
-            internal_debug(
-                "CustomCloudLoggingHandler: AsyncUploader initialized with bucket '%s'.",
-                self.default_bucket,
-            )
+            internal_debug(f"CustomCloudLoggingHandler: AsyncUploader initialized with bucket {self.default_bucket}")
         else:
             internal_debug("CustomCloudLoggingHandler: No default_bucket provided; AsyncUploader not initialized.")
 
@@ -81,12 +78,6 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
         # Update the record's message to the formatted message
         record.msg = message
         record.args = ()
-
-        # Handle None labels
-        labels = getattr(record, "_labels", None) or {}
-        if record.name:
-            labels["python_logger"] = labels.get("python_logger", record.name)
-        record._labels = labels
 
         # Proceed with the standard CloudLoggingHandler emit
         super().emit(record)
@@ -150,11 +141,7 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
             data=log_message.encode("utf-8"),
             object_name=blob_name,
         )
-        internal_debug(
-            "CustomCloudLoggingHandler: Scheduled upload for '%s'. GCS URI: %s",
-            blob_name,
-            gcs_uri,
-        )
+        internal_debug(f"CustomCloudLoggingHandler: Scheduled upload for {blob_name}. GCS URI: {gcs_uri}")
 
         return gcs_uri
 
@@ -180,7 +167,7 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
         ]
 
         # Filter out parts that are not available (i.e., None or "-")
-        available_parts = [str(part) for part, key in parts if part is not None and part != "-"]
+        available_parts = [str(part) for part, _ in parts if part is not None and part != "-"]
 
         return "logs/" + "_".join(available_parts) + ".log"
 

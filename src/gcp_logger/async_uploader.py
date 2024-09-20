@@ -1,7 +1,6 @@
 # File: gcp_logger/async_uploader.py
 
 import asyncio
-import logging
 import threading
 
 from gcloud.aio.storage import Storage
@@ -23,7 +22,7 @@ class AsyncUploader:
         self.loop_thread = threading.Thread(target=self._run_loop, daemon=True)
         self.loop_thread.start()
         self.storage_client = None  # Will be initialized asynchronously
-        internal_debug("AsyncUploader: Initialized with bucket '%s'.", self.bucket_name)
+        internal_debug(f"AsyncUploader: Initialized with bucket {self.bucket_name}")
 
     def _run_loop(self):
         """
@@ -41,7 +40,7 @@ class AsyncUploader:
                 self.storage_client = Storage()
                 internal_debug("AsyncUploader: Storage client initialized.")
             except Exception as e:
-                logging.error("AsyncUploader: Failed to initialize Storage client: %s", e)
+                internal_debug(f"AsyncUploader: Failed to initialize Storage client: {e}")
 
     def upload_data(self, data: bytes, object_name: str):
         """
@@ -52,7 +51,7 @@ class AsyncUploader:
             object_name (str): The name of the object in GCS.
         """
         future = asyncio.run_coroutine_threadsafe(self._async_upload(data, object_name), self.loop)
-        internal_debug("AsyncUploader: Scheduled upload for object '%s'.", object_name)
+        internal_debug(f"AsyncUploader: Scheduled upload for object {object_name}")
         return future
 
     async def _async_upload(self, data: bytes, object_name: str):
@@ -75,23 +74,14 @@ class AsyncUploader:
                 # Optionally, you can set additional parameters like content_type
                 # content_type='text/plain'
             )
-            logging.info(
-                "AsyncUploader: Successfully uploaded '%s' to bucket '%s'.",
-                object_name,
-                self.bucket_name,
-            )
+            internal_debug(f"AsyncUploader: Successfully uploaded {object_name} to bucket {self.bucket_name}")
         except google_exceptions.GoogleAPICallError as e:
-            logging.error(
-                "AsyncUploader: Google API call failed while uploading '%s' to bucket '%s': %s",
-                object_name,
-                self.bucket_name,
-                e,
+            internal_debug(
+                f"AsyncUploader: Google API call failed while uploading {object_name} to bucket {self.bucket_name}: {e}"
             )
         except Exception as e:
-            logging.error(
-                "AsyncUploader: An unexpected error occurred while uploading '%s': %s",
-                object_name,
-                e,
+            internal_debug(
+                f"AsyncUploader: An unexpected error occurred while uploading {object_name}: {e}",
             )
 
     def shutdown(self):
@@ -104,7 +94,7 @@ class AsyncUploader:
                 future.result(timeout=5)
                 internal_debug("AsyncUploader: Storage client closed.")
             except Exception as e:
-                logging.error("AsyncUploader: Error closing storage client: %s", e)
+                internal_debug(f"AsyncUploader: Error closing storage client: {e}")
 
         self.loop.call_soon_threadsafe(self.loop.stop)
         self.loop_thread.join()
