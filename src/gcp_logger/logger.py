@@ -109,44 +109,43 @@ class GCPLogger:
         # If no valid trace_header, generate a UUID for trace_id
         return str(uuid4()), "-"
 
+    def configure_handlers(self):
+        """
+        Configures the appropriate logging handlers based on the environment.
+        """
+        internal_debug(f"Configuring handlers for environment: {self.environment}")
 
-def configure_handlers(self):
-    """
-    Configures the appropriate logging handlers based on the environment.
-    """
-    internal_debug(f"Configuring handlers for environment: {self.environment}")
+        # Remove existing handlers to prevent duplicate logs
+        for handler in self._logger.handlers[:]:
+            self._logger.removeHandler(handler)
 
-    # Remove existing handlers to prevent duplicate logs
-    for handler in self._logger.handlers[:]:
-        self._logger.removeHandler(handler)
+        if self.environment in ["localdev", "unittest"]:
+            internal_debug("Setting up console handler for localdev/unittest")
+            formatter = ColoredFormatter(datefmt="%Y-%m-%d %H:%M:%S")
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setFormatter(formatter)
+            console_handler.setLevel(logging.DEBUG)
+            self._logger.addHandler(console_handler)
+            self._logger.propagate = False
+        else:
+            internal_debug("Setting up Custom Cloud Logging handler for production")
+            try:
+                client = cloud_logging.Client()
+                cloud_handler = CustomCloudLoggingHandler(
+                    client,
+                    default_bucket=self.default_bucket,
+                    environment=self.environment,
+                )
+                cloud_handler.setLevel(logging.DEBUG)
+                self._logger.addHandler(cloud_handler)
+                self._logger.propagate = True
+                internal_debug("Cloud Logging handler added successfully")
+            except Exception as e:
+                internal_debug(f"Error setting up Cloud Logging handler: {str(e)}")
 
-    if self.environment in ["localdev", "unittest"]:
-        internal_debug("Setting up console handler for localdev/unittest")
-        formatter = ColoredFormatter(datefmt="%Y-%m-%d %H:%M:%S")
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(formatter)
-        console_handler.setLevel(logging.DEBUG)
-        self._logger.addHandler(console_handler)
-        self._logger.propagate = False
-    else:
-        internal_debug("Setting up Custom Cloud Logging handler for production")
-        try:
-            client = cloud_logging.Client()
-            cloud_handler = CustomCloudLoggingHandler(
-                client,
-                default_bucket=self.default_bucket,
-                environment=self.environment,
-            )
-            cloud_handler.setLevel(logging.DEBUG)
-            self._logger.addHandler(cloud_handler)
-            self._logger.propagate = True
-            internal_debug("Cloud Logging handler added successfully")
-        except Exception as e:
-            internal_debug(f"Error setting up Cloud Logging handler: {str(e)}")
-
-    internal_debug(
-        f"Logger configuration complete. Propagate: {self._logger.propagate}, Handlers: {len(self._logger.handlers)}"
-    )
+        internal_debug(
+            f"Logger configuration complete. Propagate: {self._logger.propagate}, Handlers: {len(self._logger.handlers)}"
+        )
 
     @staticmethod
     def get_trace_context(trace_header: Optional[str] = None) -> tuple:
