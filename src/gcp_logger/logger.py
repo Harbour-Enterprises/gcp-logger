@@ -3,7 +3,7 @@
 import logging
 import os
 import sys
-from typing import Callable, Dict, Optional
+from typing import Optional
 from uuid import uuid4
 
 from google.cloud import logging as cloud_logging
@@ -12,7 +12,6 @@ from .colored_formatter import ColoredFormatter
 from .context_aware_logger import ContextAwareLogger
 from .custom_logging_handler import CustomCloudLoggingHandler
 from .internal_logger import internal_debug, internal_logger
-from .levels import ALERT, EMERGENCY, NOTICE  # Import custom levels
 from .logger_adapter import GCPLoggerAdapter
 
 
@@ -26,7 +25,7 @@ class GCPLogger:
         self,
         environment: str,
         default_bucket: str = None,
-        logger_name: str = "cloud_logger",
+        logger_name: str = "gcp-logger",
         debug_logs: bool = False,
     ):
         """
@@ -37,29 +36,38 @@ class GCPLogger:
             default_bucket (str, optional): The default GCS bucket for large logs.
             logger_name (str, optional): The name of the logger.
         """
+        # Configure the internal logger
+        internal_logger.configure(debug_logs)
+
+        internal_debug(
+            f"Initializing GCPLogger with environment={environment}, logger_name={logger_name}, debug_logs={debug_logs}"
+        )
+
         self.environment = environment
         self.default_bucket = default_bucket or os.getenv("GCP_DEFAULT_BUCKET")
         self.instance_id = self.get_instance_id()
         self.logger_name = logger_name
         self.debug_logs = debug_logs
 
-        # Use the custom ContextAwareLogger class
+        internal_debug(f"Setting up logger class: ContextAwareLogger")
         logging.setLoggerClass(ContextAwareLogger)
-        self._logger = logging.getLogger(self.logger_name)  # Store the original Logger
-        logging.setLoggerClass(logging.Logger)  # Reset to default Logger class
+        self._logger = logging.getLogger(self.logger_name)
+        logging.setLoggerClass(logging.Logger)
 
+        internal_debug(f"Setting logger level to DEBUG")
         self._logger.setLevel(logging.DEBUG)
         self._logger.propagate = False
+
+        internal_debug("Configuring handlers")
         self.configure_handlers()
 
-        # Use GCPLoggerAdapter to inject extra context
+        internal_debug("Setting up GCPLoggerAdapter")
         self.logger = GCPLoggerAdapter(
             self._logger,
             extra={"instance_id": self.instance_id, "trace_id": "-", "span_id": "-"},
         )
 
-        # Configure the internal logger
-        internal_logger.configure(debug_logs)
+        internal_debug("GCPLogger initialization completed")
 
     @staticmethod
     def get_instance_id() -> str:
@@ -107,18 +115,21 @@ class GCPLogger:
         Configures the appropriate logging handlers based on the environment.
         """
         # Remove existing handlers to prevent duplicate logs
+        internal_debug("Entering configure_handlers")
         for handler in self._logger.handlers[:]:
+            internal_debug(f"Removing existing handler: {handler}")
             self._logger.removeHandler(handler)
 
         if self.environment in ["localdev", "unittest"]:
-            # Console handler with colored formatting
+            internal_debug("Setting up console handler for localdev/unittest")
             formatter = ColoredFormatter(datefmt="%Y-%m-%d %H:%M:%S")
             console_handler = logging.StreamHandler(sys.stdout)
             console_handler.setFormatter(formatter)
             console_handler.setLevel(logging.DEBUG)
             self._logger.addHandler(console_handler)
+            internal_debug("Console handler added")
         else:
-            # Use the Custom Cloud Logging handler for production
+            internal_debug("Setting up Custom Cloud Logging handler for production")
             client = cloud_logging.Client()
             cloud_handler = CustomCloudLoggingHandler(
                 client,
@@ -127,6 +138,7 @@ class GCPLogger:
             )
             cloud_handler.setLevel(logging.DEBUG)
             self._logger.addHandler(cloud_handler)
+            internal_debug("Cloud handler added")
 
     @staticmethod
     def get_trace_context(trace_header: Optional[str] = None) -> tuple:
@@ -152,6 +164,7 @@ class GCPLogger:
         Returns:
             logging.Logger: The configured logger instance.
         """
+        internal_debug("get_logger called")
         return self.logger
 
     def shutdown(self):

@@ -2,6 +2,7 @@
 
 import logging
 
+from .internal_logger import internal_debug
 from .levels import ALERT, EMERGENCY, NOTICE
 
 
@@ -17,10 +18,15 @@ class GCPLoggerAdapter(logging.LoggerAdapter):
         Returns:
             tuple: The modified log message and keyword arguments.
         """
+        internal_debug(f"Processing log message: {msg}")
         extra = kwargs.get("extra", {})
         extra.update(self.extra)
         kwargs["extra"] = extra
         return msg, kwargs
+
+    def log(self, level, msg, *args, **kwargs):
+        internal_debug(f"Logging message: level={level}, msg={msg}")
+        super().log(level, msg, *args, **kwargs)
 
     def notice(self, msg, *args, **kwargs):
         """

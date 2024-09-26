@@ -41,17 +41,19 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
             default_bucket (str, optional): The default GCS bucket for large logs.
             environment (str, optional): The deployment environment (e.g., production).
         """
+        internal_debug(
+            f"Initializing CustomCloudLoggingHandler with default_bucket={default_bucket}, environment={environment}"
+        )
         super().__init__(client, name="gcp-logger")
         self.default_bucket = default_bucket
         self.environment = environment
-        self.async_uploader = None  # Initialize later if needed
+        self.async_uploader = None
 
-        # Initialize AsyncUploader for uploading large logs
         if self.default_bucket:
+            internal_debug(f"Initializing AsyncUploader with bucket {self.default_bucket}")
             self.async_uploader = AsyncUploader(bucket_name=self.default_bucket)
-            internal_debug(f"CustomCloudLoggingHandler: AsyncUploader initialized with bucket {self.default_bucket}")
         else:
-            internal_debug("CustomCloudLoggingHandler: No default_bucket provided; AsyncUploader not initialized.")
+            internal_debug("No default_bucket provided; AsyncUploader not initialized")
 
     def emit(self, record: logging.LogRecord):
         """
@@ -60,6 +62,8 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
         Args:
             record (logging.LogRecord): The log record to emit.
         """
+        internal_debug(f"Emitting log record: level={record.levelno}, msg={record.msg}")
+
         # Set the severity first
         record.severity = self.CUSTOM_LOGGING_SEVERITY.get(record.levelno, "DEFAULT")
 
