@@ -62,7 +62,7 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
         Args:
             record (logging.LogRecord): The log record to emit.
         """
-        internal_debug(f"Emitting log record: level={record.levelno}, msg={record.msg}")
+        internal_debug(f"Emitting log record: level={record.levelno}, msg={record.getMessage()}")
 
         # Set the severity first
         record.severity = self.CUSTOM_LOGGING_SEVERITY.get(record.levelno, "DEFAULT")
