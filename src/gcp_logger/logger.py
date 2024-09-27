@@ -148,9 +148,8 @@ class GCPLogger:
         else:
             internal_debug("Setting up stream handler")
             stream_handler = logging.StreamHandler()
-            if self.is_localdev:
-                local_formatter = ColoredFormatter(datefmt="%Y-%m-%d %H:%M:%S")
-                stream_handler.setFormatter(local_formatter)
+            local_formatter = ColoredFormatter(datefmt="%Y-%m-%d %H:%M:%S")
+            stream_handler.setFormatter(local_formatter)
             self._logger.addHandler(stream_handler)
 
         internal_debug(f"Logger configuration complete. Handlers: {len(self._logger.handlers)}")

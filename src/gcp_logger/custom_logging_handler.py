@@ -82,9 +82,15 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
                 trace=trace_id if trace_id != "-" else None,
                 span_id=span_id if span_id != "-" else None,
             )
+            self.flush()  # Add this line
             internal_debug("Log record sent successfully")
         except Exception as e:
             internal_debug(f"Error in emit method: {str(e)}")
+
+    def flush(self):
+        if hasattr(self.transport, "flush"):
+            self.transport.flush()
+        internal_debug("Flush called on CustomCloudLoggingHandler")
 
     def add_custom_attributes(self, record: logging.LogRecord):
         """
@@ -242,4 +248,3 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
         """
         if self.async_uploader:
             self.async_uploader.shutdown()
-        super().shutdown()
