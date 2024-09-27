@@ -8,13 +8,16 @@ version = "0.2.4"
 description = "A flexible Python package for logging with Google Cloud integration and multi-environment support."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = [ "colorama==0.4.6", "google-cloud-logging==3.11.2", "gcloud-aio-storage==9.3.0",]
+dependencies = [ "colorama==0.4.6", "gcloud-aio-storage==9.3.0", "google-cloud-logging==3.11.2"]
 [[project.authors]]
 name = "Caio Pizzol"
 email = "caio@harbourshare.com"
 
 [project.license]
 text = "MIT"
+
+[project.optional-dependencies]
+gunicorn = [ "gunicorn>=20.0.0",]
 
 [tool.black]
 line-length = 120
