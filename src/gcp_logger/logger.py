@@ -1,8 +1,5 @@
-# File: gcp_logger/logger.py
-
 import logging
 import os
-import sys
 from typing import Optional
 from uuid import uuid4
 
@@ -18,44 +15,43 @@ from .logger_adapter import GCPLoggerAdapter
 class GCPLogger:
     """
     A logger class that sets up logging with custom handlers and formatters,
-    supporting both local development and production environments.
+    supporting both local development and production environments, with tracing capabilities.
     """
 
     def __init__(
         self,
-        environment: str,
-        default_bucket: str = None,
         logger_name: str = "gcp-logger",
+        logger_level: int = logging.DEBUG,
+        default_bucket: str = None,
+        is_localdev: bool = False,
         debug_logs: bool = False,
     ):
         """
         Initializes the GCPLogger.
 
         Args:
-            environment (str): The deployment environment (e.g., 'production', 'localdev').
-            default_bucket (str, optional): The default GCS bucket for large logs.
             logger_name (str, optional): The name of the logger.
+            is_localdev (bool): Whether the environment is local development.
+            default_bucket (str, optional): The default GCS bucket for large logs.
+            debug (bool): Whether to enable debug logging.
         """
-        # Configure the internal logger
         internal_logger.configure(debug_logs)
-
         internal_debug(
-            f"Initializing GCPLogger with environment={environment}, logger_name={logger_name}, debug_logs={debug_logs}"
+            f"Initializing GCPLogger (localdev={is_localdev}), logger_name={logger_name}, debug_logs={debug_logs}"
         )
 
-        self.environment = environment
-        self.default_bucket = default_bucket or os.getenv("GCP_DEFAULT_BUCKET")
-        self.instance_id = self.get_instance_id()
         self.logger_name = logger_name
+        self.logger_level = logger_level
+        self.default_bucket = default_bucket
+        self.is_localdev = is_localdev
         self.debug_logs = debug_logs
+        self.instance_id = self.get_instance_id()
 
         internal_debug(f"Setting up logger class: ContextAwareLogger")
         logging.setLoggerClass(ContextAwareLogger)
-        self._logger = logging.getLogger(self.logger_name)
-        logging.setLoggerClass(logging.Logger)
+        self._logger = logging.getLogger(logger_name)
 
-        internal_debug(f"Setting logger level to DEBUG")
-        self._logger.setLevel(logging.DEBUG)
+        self._logger.setLevel(logger_level)
 
         internal_debug("Configuring handlers")
         self.configure_handlers()
@@ -70,12 +66,7 @@ class GCPLogger:
 
     @staticmethod
     def get_instance_id() -> str:
-        """
-        Retrieves the instance ID based on environment variables.
-
-        Returns:
-            str: The instance ID or '-' if not found.
-        """
+        """Retrieves the instance ID based on environment variables."""
         if os.getenv("GAE_INSTANCE"):
             return os.getenv("GAE_INSTANCE")[:10]
         elif os.getenv("K_SERVICE"):
@@ -113,39 +104,26 @@ class GCPLogger:
         """
         Configures the appropriate logging handlers based on the environment.
         """
-        internal_debug(f"Configuring handlers for environment: {self.environment}")
+        internal_debug(f"Configuring handlers for is_localdev={self.is_localdev}")
 
-        # Remove existing handlers to prevent duplicate logs
-        for handler in self._logger.handlers[:]:
-            self._logger.removeHandler(handler)
-
-        if self.environment in ["localdev", "unittest"]:
-            internal_debug("Setting up console handler for localdev/unittest")
-            formatter = ColoredFormatter(datefmt="%Y-%m-%d %H:%M:%S")
-            console_handler = logging.StreamHandler(sys.stdout)
-            console_handler.setFormatter(formatter)
-            console_handler.setLevel(logging.DEBUG)
-            self._logger.addHandler(console_handler)
-            self._logger.propagate = False
-        else:
-            internal_debug("Setting up Custom Cloud Logging handler for production")
+        if not self.is_localdev:
+            internal_debug("Setting up Cloud Logging handler for production")
             try:
-                client = cloud_logging.Client()
-                cloud_handler = CustomCloudLoggingHandler(
-                    client,
-                    default_bucket=self.default_bucket,
-                    environment=self.environment,
-                )
-                cloud_handler.setLevel(logging.DEBUG)
+                self.client = cloud_logging.Client()
+                cloud_handler = CustomCloudLoggingHandler(self.client, default_bucket=self.default_bucket)
                 self._logger.addHandler(cloud_handler)
-                self._logger.propagate = True
                 internal_debug("Cloud Logging handler added successfully")
             except Exception as e:
                 internal_debug(f"Error setting up Cloud Logging handler: {str(e)}")
+        else:
+            internal_debug("Setting up stream handler")
+            stream_handler = logging.StreamHandler()
+            if self.is_localdev:
+                local_formatter = ColoredFormatter(datefmt="%Y-%m-%d %H:%M:%S")
+                stream_handler.setFormatter(local_formatter)
+            self._logger.addHandler(stream_handler)
 
-        internal_debug(
-            f"Logger configuration complete. Propagate: {self._logger.propagate}, Handlers: {len(self._logger.handlers)}"
-        )
+        internal_debug(f"Logger configuration complete. Handlers: {len(self._logger.handlers)}")
 
     @staticmethod
     def get_trace_context(trace_header: Optional[str] = None) -> tuple:
@@ -156,7 +134,7 @@ class GCPLogger:
                 span_split = trace_split[1].split(";")
                 return trace_split[0], span_split[0]
             except IndexError:
-                internal_logger.debug(f"Invalid trace header format: {trace_header}")
+                internal_debug(f"Invalid trace header format: {trace_header}")
         return str(uuid4().hex), "-"
 
     def update_trace_context(self, trace_header: Optional[str] = None):

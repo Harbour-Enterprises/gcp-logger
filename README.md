@@ -3,7 +3,7 @@
   <img src="https://github.com/user-attachments/assets/755174ad-a3b8-422e-b63f-87bda305f823" alt="GCPLogger Logo" width="150" height="150">
 </div>
 
-Version: 0.1.5
+Version: 0.2.0
 
 GCPLogger is a Python package that provides a flexible and powerful logging solution, integrating with Google Cloud Logging and supporting various environments.
 

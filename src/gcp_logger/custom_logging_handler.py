@@ -2,10 +2,10 @@
 
 import logging
 import os
-import time
-from typing import Union
+from typing import Any, Dict
 
 from google.cloud import logging as cloud_logging
+from google.cloud.logging_v2._helpers import LogSeverity
 from google.cloud.logging_v2.handlers import CloudLoggingHandler
 
 from .async_uploader import AsyncUploader
@@ -17,21 +17,20 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
     MAX_LOG_SIZE = 255 * 1024  # 255KB
 
     CUSTOM_LOGGING_SEVERITY = {
-        logging.DEBUG: "DEBUG",
-        logging.INFO: "INFO",
-        NOTICE: "NOTICE",
-        logging.WARNING: "WARNING",
-        logging.ERROR: "ERROR",
-        logging.CRITICAL: "CRITICAL",
-        ALERT: "ALERT",
-        EMERGENCY: "EMERGENCY",
+        logging.DEBUG: LogSeverity.DEBUG,
+        logging.INFO: LogSeverity.INFO,
+        NOTICE: LogSeverity.NOTICE,
+        logging.WARNING: LogSeverity.WARNING,
+        logging.ERROR: LogSeverity.ERROR,
+        logging.CRITICAL: LogSeverity.CRITICAL,
+        ALERT: LogSeverity.ALERT,
+        EMERGENCY: LogSeverity.EMERGENCY,
     }
 
     def __init__(
         self,
         client: cloud_logging.Client,
         default_bucket: str = None,
-        environment: str = None,
     ):
         """
         Initializes the CustomCloudLoggingHandler.
@@ -39,11 +38,8 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
         Args:
             client (cloud_logging.Client): The Google Cloud Logging client.
             default_bucket (str, optional): The default GCS bucket for large logs.
-            environment (str, optional): The deployment environment (e.g., production).
         """
-        internal_debug(
-            f"Initializing CustomCloudLoggingHandler: client={client}, default_bucket={default_bucket}, environment={environment}"
-        )
+        internal_debug(f"Initializing CustomCloudLoggingHandler: client={client}, default_bucket={default_bucket}")
         try:
             super().__init__(client, name="gcp-logger")
             internal_debug("CloudLoggingHandler initialized successfully")
@@ -52,15 +48,7 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
             raise
 
         self.default_bucket = default_bucket
-        self.environment = environment
-        self.async_uploader = None
-
-        if self.default_bucket:
-            try:
-                self.async_uploader = AsyncUploader(bucket_name=self.default_bucket)
-                internal_debug(f"AsyncUploader initialized with bucket {self.default_bucket}")
-            except Exception as e:
-                internal_debug(f"Error initializing AsyncUploader: {str(e)}")
+        self.async_uploader = AsyncUploader(bucket_name=self.default_bucket) if self.default_bucket else None
 
     def emit(self, record: logging.LogRecord):
         """
@@ -72,25 +60,29 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
         internal_debug(f"Emitting log: level={record.levelno}, msg={record.getMessage()[:50]}...")
 
         try:
-            record.severity = self.CUSTOM_LOGGING_SEVERITY.get(record.levelno, "DEFAULT")
             self.add_custom_attributes(record)
+
+            if self.is_large_log(record) and self.async_uploader:
+                record = self.handle_large_log(record)
+
+            internal_debug("Sending log record to Cloud Logging")
             message = self.format_log_message(record)
 
-            if len(message.encode("utf-8")) > self.MAX_LOG_SIZE and self.async_uploader:
-                internal_debug("Log size exceeds MAX_LOG_SIZE, attempting to upload to GCS")
-                gcs_uri = self.upload_large_log_to_gcs(record.getMessage(), record.__dict__)
-                if gcs_uri:
-                    message = self.truncate_log_message(message, gcs_uri)
-                    internal_debug(f"Log truncated and uploaded to GCS: {gcs_uri}")
-                else:
-                    internal_debug("Failed to upload large log to GCS")
+            # Ensure we have a valid labels dictionary
+            labels = dict(self.resource.labels) if self.resource.labels else {}
 
-            record.msg = message
-            record.args = ()
+            trace_id = getattr(record, "trace_id")
+            span_id = getattr(record, "span_id")
 
-            internal_debug("Calling super().emit")
-            super().emit(record)
-            internal_debug("super().emit completed successfully")
+            self.transport.send(
+                record,
+                message,
+                resource=self.resource,
+                labels=labels,
+                trace=trace_id if trace_id != "-" else None,
+                span_id=span_id if span_id != "-" else None,
+            )
+            internal_debug("Log record sent successfully")
         except Exception as e:
             internal_debug(f"Error in emit method: {str(e)}")
 
@@ -99,20 +91,134 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
         Adds custom attributes to the log record.
 
         Args:
-            record (logging.LogRecord): The log record to modify.
+            record (logging.LogRecord): The log record to process.
         """
-        internal_debug("Adding custom attributes to log record")
-        record.instance_id = getattr(record, "instance_id", "-")
-        record.trace_id = getattr(record, "trace_id", "-")
-        record.span_id = getattr(record, "span_id", "-")
-        record.environment = self.environment or "production"
-        record.filename = os.path.basename(getattr(record, "custom_filename", record.filename)).split(".")[0]
-        record.funcName = getattr(record, "custom_func", record.funcName)
-        record.lineno = getattr(record, "custom_lineno", record.lineno)
+        custom_fields = self.extract_custom_fields(record)
+        for key, value in custom_fields.items():
+            setattr(record, key, value)
+
+    def get_severity(self, level: int) -> LogSeverity:
+        """
+        Maps a logging level to a Google Cloud LogSeverity.
+
+        Args:
+            level (int): The logging level.
+
+        Returns:
+            LogSeverity: The corresponding Google Cloud LogSeverity.
+        """
+        return self.CUSTOM_LOGGING_SEVERITY.get(level, LogSeverity.DEFAULT)
+
+    def extract_custom_fields(self, record: logging.LogRecord) -> Dict[str, Any]:
+        """
+        Extracts custom fields from a logging.LogRecord.
+
+        Args:
+            record (logging.LogRecord): The log record to process.
+
+        Returns:
+            Dict[str, Any]: A dictionary of custom fields.
+        """
+        return {
+            "instance_id": getattr(record, "instance_id", "-"),
+            "trace_id": getattr(record, "trace_id", "-"),
+            "span_id": getattr(record, "span_id", "-"),
+            "filename": os.path.basename(getattr(record, "custom_filename", record.filename)).split(".")[0],
+            "funcName": getattr(record, "custom_func", record.funcName),
+            "lineno": getattr(record, "custom_lineno", record.lineno),
+            "process": record.process,
+            "thread": record.thread,
+            "levelname": record.levelname,
+            "severity": self.get_severity(record.levelno),
+        }
+
+    def is_large_log(self, record: logging.LogRecord) -> bool:
+        """
+        Checks if a log record exceeds the maximum log size.
+
+        Args:
+            record (logging.LogRecord): The log record to check.
+
+        Returns:
+            bool: True if the log record is large, False otherwise.
+        """
+        message = self.format(record)
+        return len(message.encode("utf-8")) > self.MAX_LOG_SIZE
+
+    def handle_large_log(self, record: logging.LogRecord) -> logging.LogRecord:
+        """
+        Handles a large log record by uploading it to GCS and truncating the message.
+
+        Args:
+            record (logging.LogRecord): The large log record.
+
+        Returns:
+            logging.LogRecord: The updated log record with a truncated message.
+        """
+        internal_debug("Log size exceeds MAX_LOG_SIZE, attempting to upload to GCS")
+        message = self.format_log_message(record)
+        labels = dict(self.labels) if self.labels else {}
+        gcs_uri = self.upload_large_log_to_gcs(message, labels)
+        if gcs_uri:
+            truncated_message = self.truncate_log_message(message, gcs_uri)
+            record.msg = truncated_message
+            internal_debug(f"Log truncated and uploaded to GCS: {gcs_uri}")
+        else:
+            internal_debug("Failed to upload large log to GCS")
+        return record
+
+    def upload_large_log_to_gcs(self, payload: str, labels: Dict[str, str]) -> str:
+        """
+        Uploads a large log message to GCS.
+
+        Args:
+            payload (str): The log message to upload.
+            labels (Dict[str, str]): Labels associated with the log entry.
+
+        Returns:
+            str: The GCS URI of the uploaded log.
+        """
+        blob_name = self.generate_blob_name(labels)
+        gcs_uri = f"gs://{self.default_bucket}/{blob_name}"
+        self.async_uploader.upload_data(data=payload.encode("utf-8"), object_name=blob_name)
+        return gcs_uri
+
+    def generate_blob_name(self, labels: Dict[str, str]) -> str:
+        """
+        Generates a unique blob name for the log message.
+
+        Args:
+            labels (Dict[str, str]): Labels associated with the log entry.
+
+        Returns:
+            str: The generated blob name.
+        """
+        import time
+
+        timestamp = int(time.time())
+        parts = [str(timestamp)] + [str(labels.get(key, "")) for key in ["instance_id", "trace_id", "span_id"]]
+        return f"logs/{'_'.join(filter(bool, parts))}.log"
+
+    def truncate_log_message(self, message: str, gcs_uri: str) -> str:
+        """
+        Truncates the log message and appends a reference to the GCS URI.
+
+        Args:
+            message (str): The original log message.
+            gcs_uri (str): The GCS URI where the full log is stored.
+
+        Returns:
+            str: The truncated log message with a reference.
+        """
+        truncation_notice = "... [truncated]"
+        additional_text = f"\nMessage has been truncated. Full log at: {gcs_uri}"
+        max_message_length = self.MAX_LOG_SIZE - len(truncation_notice) - len(additional_text)
+        truncated_message = message[:max_message_length]
+        return f"{truncated_message}{truncation_notice}{additional_text}"
 
     def format_log_message(self, record: logging.LogRecord) -> str:
         """
-        Formats the log message.
+        Formats the log message according to the specified format.
 
         Args:
             record (logging.LogRecord): The log record to format.
@@ -120,7 +226,6 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
         Returns:
             str: The formatted log message.
         """
-        internal_debug("Formatting log message")
         log_format = (
             "{instance_id} | {trace_id} | {span_id} | "
             "{process} | {thread} | "
@@ -129,97 +234,12 @@ class CustomCloudLoggingHandler(CloudLoggingHandler):
             "{message}"
         )
 
-        record.message = record.getMessage()
-
         return log_format.format(**record.__dict__)
-
-    def upload_large_log_to_gcs(self, log_message: str, record_dict: dict) -> Union[str, None]:
-        """
-        Uploads a large log message to GCS asynchronously.
-
-        Args:
-            log_message (str): The log message to upload.
-            record_dict (dict): The dictionary representation of the log record.
-
-        Returns:
-            Union[str, None]: The GCS URI of the uploaded log or None if upload failed.
-        """
-        if not self.default_bucket or not self.async_uploader:
-            internal_debug("Skipping upload to GCS: missing default_bucket or async_uploader")
-            return None
-
-        internal_debug(f"Uploading large log to GCS bucket: {self.default_bucket}")
-        blob_name = self.get_blob_name(record_dict)
-        gcs_uri = f"gs://{self.default_bucket}/{blob_name}"
-
-        try:
-            # Upload asynchronously using AsyncUploader
-            self.async_uploader.upload_data(data=log_message.encode("utf-8"), object_name=blob_name)
-            internal_debug(f"Scheduled upload for {blob_name}. GCS URI: {gcs_uri}")
-            return gcs_uri
-        except Exception as e:
-            internal_debug(f"Error uploading to GCS: {str(e)}")
-            return None
-
-    def get_blob_name(self, record_dict: dict) -> str:
-        """
-        Generates a unique blob name for the log message.
-
-        Args:
-            record_dict (dict): The dictionary representation of the log record.
-
-        Returns:
-            str: The blob name for the log message.
-        """
-        internal_debug("Generating blob name for GCS upload")
-
-        timestamp = int(time.time())
-
-        parts = [
-            (timestamp, None),  # timestamp is always included
-            (record_dict.get("instance_id"), "instance_id"),
-            (record_dict.get("trace_id"), "trace_id"),
-            (record_dict.get("span_id"), "span_id"),
-            (record_dict.get("process"), "process"),
-            (record_dict.get("thread"), "thread"),
-        ]
-
-        # Filter out parts that are not available (i.e., None or "-")
-        available_parts = [str(part) for part, _ in parts if part is not None and part != "-"]
-
-        return "logs/" + "_".join(available_parts) + ".log"
-
-    def truncate_log_message(self, log_message: str, gcs_uri: str) -> str:
-        """
-        Truncates the log message and appends a reference to the GCS URI.
-
-        Args:
-            log_message (str): The original log message.
-            gcs_uri (str): The GCS URI where the full log is stored.
-
-        Returns:
-            str: The truncated log message with a reference.
-        """
-        internal_debug("Truncating log message")
-
-        truncation_notice = "... [truncated]"
-        additional_text = f"\nMessage has been truncated. Full log at: {gcs_uri}"
-
-        max_message_length = (
-            self.MAX_LOG_SIZE - len(truncation_notice.encode("utf-8")) - len(additional_text.encode("utf-8"))
-        )
-        truncated_message = log_message.encode("utf-8")[:max_message_length].decode("utf-8", errors="ignore")
-
-        return f"{truncated_message}{truncation_notice}{additional_text}"
 
     def shutdown(self):
         """
         Shuts down the AsyncUploader gracefully.
         """
-        internal_debug("Shutting down CustomCloudLoggingHandler")
         if self.async_uploader:
-            try:
-                self.async_uploader.shutdown()
-                internal_debug("AsyncUploader shutdown complete")
-            except Exception as e:
-                internal_debug(f"Error during AsyncUploader shutdown: {str(e)}")
+            self.async_uploader.shutdown()
+        super().shutdown()
