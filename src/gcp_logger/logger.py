@@ -9,7 +9,7 @@ from google.cloud import logging as cloud_logging
 from .colored_formatter import ColoredFormatter
 from .context_aware_logger import ContextAwareLogger
 from .custom_logging_handler import CustomCloudLoggingHandler
-from .internal_logger import internal_debug, internal_logger
+from .internal_logger import debug_only, internal_debug, internal_logger
 from .logger_adapter import GCPLoggerAdapter
 
 
@@ -70,16 +70,22 @@ class GCPLogger:
 
     def _initialize(self):
         internal_logger.configure(self.debug_logs)
+        self._debug_init()
+        self._setup_logger()
+        self._initialized = True
+
+    @debug_only
+    def _debug_init(self):
         internal_debug(
             f"Initializing GCPLogger (localdev={self.is_localdev}), logger_name={self.logger_name}, debug_logs={self.debug_logs}"
         )
 
+    def _setup_logger(self):
         self.instance_id = self.get_instance_id()
 
         internal_debug(f"Setting up logger class: ContextAwareLogger")
         logging.setLoggerClass(ContextAwareLogger)
         self._logger = logging.getLogger(self.logger_name)
-
         self._logger.setLevel(self.logger_level)
 
         internal_debug("Configuring handlers")
@@ -92,7 +98,6 @@ class GCPLogger:
         )
 
         internal_debug("GCPLogger initialization completed")
-        self._initialized = True
 
     @staticmethod
     def get_instance_id() -> str:

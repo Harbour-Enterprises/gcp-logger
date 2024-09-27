@@ -1,7 +1,8 @@
 # File: gcp_logger/internal_logger.py
 
-import logging
 import sys
+from datetime import datetime
+from functools import wraps
 
 
 class InternalLogger:
@@ -14,23 +15,16 @@ class InternalLogger:
         return cls._instance
 
     def __init__(self):
-        self.logger = logging.getLogger("gcp_logger.internal")
-        self.logger.setLevel(logging.INFO)
-        self.handler = None
+        self.is_debug_enabled = False
 
-    def configure(self, debug_internal: bool):
-        if self.handler:
-            self.logger.removeHandler(self.handler)
-
-        self.handler = logging.StreamHandler(sys.stdout)
-        formatter = logging.Formatter("GCPLogger Internal: %(message)s")
-        self.handler.setFormatter(formatter)
-        self.handler.setLevel(logging.DEBUG if debug_internal else logging.INFO)
-        self.logger.addHandler(self.handler)
-        self.logger.setLevel(logging.DEBUG if debug_internal else logging.INFO)
+    def configure(self, debug: bool):
+        self.is_debug_enabled = debug
 
     def debug(self, msg, *args, **kwargs):
-        self.logger.debug(msg, *args, **kwargs)
+        if self.is_debug_enabled:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            formatted_msg = msg.format(*args, **kwargs) if args or kwargs else msg
+            print(f"[{timestamp}] GCPLogger Internal: {formatted_msg}", file=sys.stderr, flush=True)
 
 
 internal_logger = InternalLogger.get_instance()
@@ -38,3 +32,12 @@ internal_logger = InternalLogger.get_instance()
 
 def internal_debug(msg, *args, **kwargs):
     internal_logger.debug(msg, *args, **kwargs)
+
+
+def debug_only(func):
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        if self.debug_logs:
+            return func(self, *args, **kwargs)
+
+    return wrapper
