@@ -135,11 +135,27 @@ class GCPLogger:
         # If no valid trace_header, generate a UUID for trace_id
         return str(uuid4()), "-"
 
+    @staticmethod
+    def remove_existing_handlers(logger: Optional[logging.Logger] = None):
+        """
+        Remove all existing handlers from the specified logger or the root logger.
+
+        Args:
+            logger (logging.Logger, optional): The logger to remove handlers from.
+                                               If None, removes handlers from the root logger.
+        """
+        target_logger = logger or logging.root
+        for handler in target_logger.handlers[:]:
+            target_logger.removeHandler(handler)
+
     def configure_handlers(self):
         """
         Configures the appropriate logging handlers based on the environment.
         """
         internal_debug(f"Configuring handlers for is_localdev={self.is_localdev}")
+
+        # Remove existing handlers
+        self.remove_existing_handlers(self._logger)
 
         if not self.is_localdev:
             internal_debug("Setting up Cloud Logging handler for production")

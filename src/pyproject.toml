@@ -16,9 +16,6 @@ email = "caio@harbourshare.com"
 [project.license]
 text = "MIT"
 
-[project.optional-dependencies]
-gunicorn = [ "gunicorn>=20.0.0",]
-
 [tool.black]
 line-length = 120
 
