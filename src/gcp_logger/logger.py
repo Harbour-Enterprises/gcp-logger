@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 from typing import Optional
 from uuid import uuid4
 
@@ -18,6 +19,17 @@ class GCPLogger:
     supporting both local development and production environments, with tracing capabilities.
     """
 
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            with cls._lock:
+                if not cls._instance:
+                    cls._instance = super(GCPLogger, cls).__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+
     def __init__(
         self,
         logger_name: str = "gcp-logger",
@@ -31,27 +43,44 @@ class GCPLogger:
 
         Args:
             logger_name (str, optional): The name of the logger.
-            is_localdev (bool): Whether the environment is local development.
+            logger_level (int): The logging level.
             default_bucket (str, optional): The default GCS bucket for large logs.
-            debug (bool): Whether to enable debug logging.
+            is_localdev (bool): Whether the environment is local development.
+            debug_logs (bool): Whether to enable debug logging.
         """
-        internal_logger.configure(debug_logs)
-        internal_debug(
-            f"Initializing GCPLogger (localdev={is_localdev}), logger_name={logger_name}, debug_logs={debug_logs}"
-        )
+        if self._initialized:
+            return
 
+        self._init_lock = threading.Lock()
         self.logger_name = logger_name
         self.logger_level = logger_level
         self.default_bucket = default_bucket
         self.is_localdev = is_localdev
         self.debug_logs = debug_logs
+        self._logger = None
+        self.logger = None
+        self._initialized = False
+        self._lazy_init()
+
+    def _lazy_init(self):
+        if not self._initialized:
+            with self._init_lock:
+                if not self._initialized:
+                    self._initialize()
+
+    def _initialize(self):
+        internal_logger.configure(self.debug_logs)
+        internal_debug(
+            f"Initializing GCPLogger (localdev={self.is_localdev}), logger_name={self.logger_name}, debug_logs={self.debug_logs}"
+        )
+
         self.instance_id = self.get_instance_id()
 
         internal_debug(f"Setting up logger class: ContextAwareLogger")
         logging.setLoggerClass(ContextAwareLogger)
-        self._logger = logging.getLogger(logger_name)
+        self._logger = logging.getLogger(self.logger_name)
 
-        self._logger.setLevel(logger_level)
+        self._logger.setLevel(self.logger_level)
 
         internal_debug("Configuring handlers")
         self.configure_handlers()
@@ -63,6 +92,7 @@ class GCPLogger:
         )
 
         internal_debug("GCPLogger initialization completed")
+        self._initialized = True
 
     @staticmethod
     def get_instance_id() -> str:
@@ -139,6 +169,7 @@ class GCPLogger:
 
     def update_trace_context(self, trace_header: Optional[str] = None):
         """Update the logger's trace context."""
+        self._lazy_init()
         trace_id, span_id = self.get_trace_context(trace_header)
         self.logger.extra.update({"trace_id": trace_id, "span_id": span_id})
 
@@ -149,6 +180,7 @@ class GCPLogger:
         Returns:
             logging.Logger: The configured logger instance.
         """
+        self._lazy_init()
         internal_debug("get_logger called")
         return self.logger
 
@@ -156,6 +188,7 @@ class GCPLogger:
         """
         Shuts down all handlers gracefully.
         """
+        self._lazy_init()
         for handler in self._logger.handlers:
             if hasattr(handler, "shutdown"):
                 handler.shutdown()
