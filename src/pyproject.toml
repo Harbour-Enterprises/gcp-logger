@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gcp-logger"
-version = "0.2.6"
+version = "1.0.0"
 description = "A flexible Python package for logging with Google Cloud integration and multi-environment support."
 readme = "README.md"
-requires-python = ">=3.10"
-dependencies = [ "colorama==0.4.6", "gcloud-aio-storage==9.3.0", "google-cloud-logging==3.11.2"]
+requires-python = ">=3.7"
+dependencies = [ "google-cloud-logging==3.11.3",]
 [[project.authors]]
 name = "Caio Pizzol"
 email = "caio@harbourshare.com"
@@ -22,7 +22,5 @@ line-length = 120
 [tool.isort]
 profile = "black"
 
-[tool.pytest.ini_options]
-minversion = "6.0"
-addopts = "--maxfail=2 -ra"
-testpaths = [ "tests",]
+[tool.tox]
+legacy_tox_ini = "[tox]\nenvlist = py310, py311, py312\nisolated_build = True\n\n[testenv]\ndeps =\n    -r ../requirements.txt\n    -r ../requirements-test.txt\n    python-dotenv\ncommands =\n    pytest ../tests --cov=../tests --disable-warnings -o log_cli=true --log-cli-level=INFO\n"

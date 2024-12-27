@@ -10,3 +10,5 @@ __pycache__/
 dev/
 .coverage
 coverage.xml
+.benchmarks/
+.tox/

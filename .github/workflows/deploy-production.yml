@@ -1,32 +1,27 @@
-name: 🔬 Deploy staging version [auto]
+name: 🚀 Deploy production version [manual]
 
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: 'Version to deploy'
+        required: false
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
       bump_version:
         description: 'Bump version before deployment'
         required: true
         type: boolean
         default: true
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - "README*.md"
-      - ".gcloudignore"
-      - ".gitignore"
-      - ".github/**"
-      - ".vscode/**"
-      - "Makefile"
-      - "examples/**"
-      - ".bumpversion.cfg"
-      - "pyproject.toml"
 
 concurrency:
-  group: staging-${{ github.event.pull_request.number || github.ref }} # Cancel previous staging deployments
+  group: production-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-#Actions
 jobs:
   run-unit-tests:
     uses: Harbour-Enterprises/Harbour-GHA-Workflows/.github/workflows/run-unit-tests-tox.yml@main
@@ -43,6 +38,6 @@ jobs:
     uses: Harbour-Enterprises/Harbour-GHA-Workflows/.github/workflows/publish-python-package.yml@main
     with:
       bump_version: ${{ inputs.bump_version }}
-      version_update: patch
-      environment: development
+      version_update: ${{ inputs.version }}
+      environment: production
     secrets: inherit
