@@ -40,7 +40,7 @@ jobs:
     needs: run-unit-tests
     permissions:
       contents: write
-    uses: ./.github/workflows/publish-python-package.yml
+    uses: ./.github/workflows/publish-package.yml
     with:
       bump_version: ${{ inputs.bump_version }}
       version_update: patch
