@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   run-unit-tests:
-    uses: Harbour-Enterprises/Harbour-GHA-Workflows/.github/workflows/run-unit-tests-tox.yml@main
+    uses: ./.github/workflows/run-unit-tests.yml
     with:
       source_branch: ${{ github.head_ref }}
       source_folder: "src"
@@ -35,7 +35,7 @@ jobs:
     needs: run-unit-tests
     permissions:
       contents: write
-    uses: Harbour-Enterprises/Harbour-GHA-Workflows/.github/workflows/publish-python-package.yml@main
+    uses: ./.github/workflows/publish-python-package.yml
     with:
       bump_version: ${{ inputs.bump_version }}
       version_update: ${{ inputs.version }}
