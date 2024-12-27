@@ -1,22 +1,21 @@
-# GCPLogger
-<div align="center">
-  <img src="https://github.com/user-attachments/assets/755174ad-a3b8-422e-b63f-87bda305f823" alt="GCPLogger Logo" width="150" height="150">
-</div>
+# 💾 GCPLogger
 
-Version: 0.2.6
+Version: 1.0.0
 
-GCPLogger is a Python package that provides a flexible and powerful logging solution, integrating with Google Cloud Logging and supporting various environments.
+GCPLogger is a Python package that provides seamless integration with Google Cloud Logging, offering enhanced logging capabilities for both cloud and local development environments.
 
 ## Features
 
-- Easy integration with Google Cloud Logging
-- Full support for GCP Logging severities
-- Support for local development and production environments
-- Automatic handling of large log messages via Google Cloud Storage
-- Custom log levels (ALERT, EMERGENCY)
-- Colorized console output for local development
-- Automatic capture of Instance ID for AppEngine, Cloud Run, and Cloud Functions services
-- Support for Trace ID and Span ID when running in Google Cloud environments
+- **Native Google Cloud Logging Integration**: Direct integration with Google Cloud's logging service
+- **Environment-Aware**: Automatically adjusts between cloud and local development environments
+- **Enhanced Log Levels**: Additional severity levels like NOTICE, ALERT, and EMERGENCY
+- **Trace Context Support**: Built-in handling of Trace ID and Span ID for request tracking
+- **Instance ID Integration**: Automatic capture of instance IDs in cloud environments
+- **Structured Logging**: JSON-formatted logs with standardized fields
+- **Developer-Friendly**: Colorized console output for local development
+- **Large Message Handling**: Automatic truncation of oversized log messages
+- **Exception Tracking**: Enhanced error reporting with stack traces
+- **Framework Integration**: Ready-to-use middleware for FastAPI and Flask
 
 ## Installation
 
@@ -31,18 +30,65 @@ Basic usage:
 ```python
 from gcp_logger import GCPLogger
 
-# Initialize GCPLogger
-gcp_logger = GCPLogger(environment="production", default_bucket="my-gcs-bucket")
+# Initialize logger
+logger = GCPLogger().logger
 
-# Get the logger instance
-logger = gcp_logger.get_logger()
-
-# Use the logger
-logger.info("This is an info log")
-logger.error("This is an error log")
+# Use various log levels
+logger.debug("Debug message")
+logger.info("Info message")
+logger.notice("Notice message")
+logger.warning("Warning message")
+logger.error("Error message")
+logger.critical("Critical message")
+logger.alert("Alert message")
+logger.emergency("Emergency message")
 ```
 
-For more examples, see the `examples/` directory.
+### Framework Integration
+
+#### FastAPI Example:
+
+```python
+from fastapi import FastAPI
+from gcp_logger import GCPLogger
+from starlette.middleware.base import BaseHTTPMiddleware
+
+app = FastAPI()
+gcp_logger = GCPLogger()
+logger = gcp_logger.logger
+
+class TraceMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        trace_header = request.headers.get("X-Cloud-Trace-Context")
+        if trace_header:
+            gcp_logger.update_log_record_factory(
+                trace_id=trace_header.split("/")[0],
+                span_id=trace_header.split("/")[1].split(";")[0]
+            )
+        return await call_next(request)
+
+app.add_middleware(TraceMiddleware)
+```
+
+#### Flask Example:
+
+```python
+from flask import Flask, request
+from gcp_logger import GCPLogger
+
+app = Flask(__name__)
+gcp_logger = GCPLogger()
+logger = gcp_logger.logger
+
+@app.before_request
+def before_request():
+    trace_header = request.headers.get("X-Cloud-Trace-Context")
+    if trace_header:
+        gcp_logger.update_log_record_factory(
+            trace_id=trace_header.split("/")[0],
+            span_id=trace_header.split("/")[1].split(";")[0]
+        )
+```
 
 ## Comparison with Other Logging Libraries
 
@@ -59,27 +105,75 @@ GCPLogger combines the best features of popular Python logging libraries with na
 | Trace/Span ID Support     | ✅         | ❌     | ❌          | ❌             |
 | Large Message Handling    | ✅         | ❌     | ❌          | ❌             |
 | Performance (High Volume) | Good       | Good   | Excellent   | Fair           |
-| Memory Usage              | Low        | Low    | Very Low    | Low            |
-| Ease of Use               | High       | High   | Medium      | Medium         |
-| Cloud-Native Design       | ✅         | ❌     | ❌          | ❌             |
+| Memory Usage             | Low        | Low    | Very Low    | Low            |
+| Ease of Use              | High       | High   | Medium      | Medium         |
+| Cloud-Native Design      | ✅         | ❌     | ❌          | ❌             |
 
 ### Key Advantages of GCP Logger
 
-1. **Native GCP Integration**: Seamlessly works with Google Cloud Logging and other GCP services.
-2. **Cloud-Native Features**: Automatic capture of Instance ID, support for Trace and Span IDs.
-3. **Flexible Log Levels**: Includes custom levels like NOTICE, ALERT, and EMERGENCY.
-4. **Large Message Handling**: Efficiently manages oversized log messages via Google Cloud Storage.
-5. **Development-Friendly**: Offers colorized console output for improved readability during local development.
-6. **Balanced Performance**: Maintains good performance in both normal and high-volume scenarios.
-7. **Comprehensive Logging Solution**: Combines the best features of popular logging libraries with GCP-specific enhancements.
+1. **Native GCP Integration**: Seamlessly works with Google Cloud Logging and other GCP services
+2. **Cloud-Native Features**: Automatic capture of Instance ID, support for Trace and Span IDs
+3. **Flexible Log Levels**: Includes custom levels like NOTICE, ALERT, and EMERGENCY
+4. **Development-Friendly**: Offers colorized console output for improved readability during local development
+5. **Balanced Performance**: Maintains good performance in both normal and high-volume scenarios
+6. **Comprehensive Solution**: Combines the best features of popular logging libraries with GCP-specific enhancements
+
+## Key Features
+
+### Environment-Based Configuration
+
+GCPLogger automatically detects and configures itself based on the environment:
+
+- **Cloud Environment**: Uses structured JSON logging format compatible with Google Cloud Logging
+- **Local Development**: Provides colorized console output for better readability
+
+### Custom Log Levels
+
+In addition to standard log levels, GCPLogger provides:
+
+- **NOTICE**: For normal but significant events
+- **ALERT**: For situations requiring immediate attention
+- **EMERGENCY**: For system-wide catastrophic failures
+
+### Trace Context Support
+
+Automatically captures and includes trace context in logs when running in Google Cloud environments:
+
+- Trace ID for request tracing
+- Span ID for operation tracking
+- Instance ID for container/VM identification
+
+### Structured Logging
+
+All logs are automatically structured with:
+
+- Timestamp
+- Severity level
+- Source location (file, line, function)
+- Trace context (when available)
+- Error reporting information (for exceptions)
 
 ## Development
 
 To set up the development environment:
 
 1. Clone the repository
-2. Install dependencies: `pip install -r requirements.txt`
-3. Run tests: `pytest tests`
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install -r requirements-dev.txt
+   pip install -r requirements-test.txt
+   ```
+3. Run tests:
+   ```bash
+   pytest tests
+   ```
+
+### Running Performance Tests
+
+```bash
+pytest tests -v -m performance
+```
 
 ## Contributing
 
