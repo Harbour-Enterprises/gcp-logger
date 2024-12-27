@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   run-unit-tests:
-    uses: ./.github/workflows/run-unit-tests.yml
+    uses: Harbour-Enterprises/gcp-logger/.github/workflows/run-unit-tests.yml@main
     with:
       source_branch: ${{ github.head_ref }}
       source_folder: "src"
@@ -35,7 +35,7 @@ jobs:
     needs: run-unit-tests
     permissions:
       contents: write
-    uses: ./.github/workflows/publish-package.yml
+    uses: Harbour-Enterprises/gcp-logger/.github/workflows/publish-package.yml@main
     with:
       bump_version: ${{ inputs.bump_version }}
       version_update: ${{ inputs.version }}
