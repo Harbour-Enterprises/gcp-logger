@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       bump_version:
-        description: 'Bump version before deployment'
+        description: "Bump version before deployment"
         required: true
         type: boolean
         default: true

@@ -17,12 +17,12 @@ on:
         description: "Target branch to compare against"
         required: false
         type: string
-        default: "main"        
+        default: "main"
       source_folder:
         description: "Working directory to run tox in"
         required: false
         type: string
-        default: "src"  
+        default: "src"
 
   workflow_dispatch:
     inputs:
@@ -45,12 +45,12 @@ on:
         description: "Working directory to run tox in"
         required: false
         type: string
-        default: "src"       
+        default: "src"
       target_branch:
         description: "Target branch to compare against"
         required: false
         type: string
-        default: "main"        
+        default: "main"
 
 jobs:
   test:
@@ -58,7 +58,7 @@ jobs:
     strategy:
       matrix:
         python-version: ${{ fromJson(inputs.python_versions) }}
-    steps:     
+    steps:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
