@@ -80,33 +80,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-build.txt
 
-      - name: Bump up package version
-        if: inputs.bump_version
+      - name: Configure Git
         run: |
           git config --local user.name 'github-actions[bot]'
           git config --local user.email 'github-actions[bot]@users.noreply.github.com'
 
+      - name: Bump up package version
+        if: inputs.bump_version
+        run: |
           bump2version ${{ inputs.version_update }}
 
       - name: Commit and push changes
         if: inputs.bump_version
         run: |
-          # Get the new version
-          NEW_VERSION=$(grep -Po '(?<=version = ")[^"]*' src/pyproject.toml)
-          echo "New version: ${NEW_VERSION}"
-
           git add .
-          git commit --allow-empty -m "chore: version update to v${NEW_VERSION}"
-
-          # Create and push appropriate tag based on environment
-          if [[ "${{ inputs.environment }}" == "production" ]]; then
-            git tag "v${NEW_VERSION}"
-          else
-            git tag "v${NEW_VERSION}-rc"
-          fi
-
+          git commit --allow-empty -m "chore: version update"
           git push
-          git push --tags
 
       - name: Build package and publish
         working-directory: src
