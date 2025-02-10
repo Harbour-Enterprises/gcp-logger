@@ -90,9 +90,23 @@ jobs:
         run: |
           git config --local user.name 'github-actions[bot]'
           git config --local user.email 'github-actions[bot]@users.noreply.github.com'
+
+          # Get the new version
+          NEW_VERSION=$(grep -Po '(?<=version = ")[^"]*' src/pyproject.toml)
+          echo "New version: ${NEW_VERSION}"
+
           git add .
-          git commit --allow-empty -m "chore: version update"
+          git commit --allow-empty -m "chore: version update to v${NEW_VERSION}"
+
+          # Create and push appropriate tag based on environment
+          if [[ "${{ inputs.environment }}" == "production" ]]; then
+            git tag "v${NEW_VERSION}"
+          else
+            git tag "v${NEW_VERSION}-rc"
+          fi
+
           git push
+          git push --tags
 
       - name: Build package and publish
         working-directory: src
