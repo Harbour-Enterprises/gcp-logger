@@ -1,13 +1,16 @@
 # examples/flask_example.py
 from flask import Flask, jsonify, request
 
-from gcp_logger import GCPLogger
+from gcp_logger import GCPLogger, LogEnvironment
 
 # Initialize Flask app
 app = Flask(__name__)
 
 # Initialize logger
-gcp_logger = GCPLogger(environment="localdev")
+# For local development, you can use either the enum or string-based initialization
+gcp_logger = GCPLogger(LogEnvironment.LOCAL)  # Using enum (recommended)
+# Alternative string-based initialization:
+# gcp_logger = GCPLogger("dev")  # Will also use LOCAL environment
 logger = gcp_logger.logger
 
 

@@ -1,13 +1,13 @@
 # 💾 GCPLogger
 
-Version: 1.0.0
+Version: 1.1.0
 
 GCPLogger is a Python package that provides seamless integration with Google Cloud Logging, offering enhanced logging capabilities for both cloud and local development environments.
 
 ## Features
 
 - **Native Google Cloud Logging Integration**: Direct integration with Google Cloud's logging service
-- **Environment-Aware**: Automatically adjusts between cloud and local development environments
+- **Environment-Aware**: Flexible environment configuration with enum-based setup
 - **Enhanced Log Levels**: Additional severity levels like NOTICE, ALERT, and EMERGENCY
 - **Trace Context Support**: Built-in handling of Trace ID and Span ID for request tracking
 - **Instance ID Integration**: Automatic capture of instance IDs in cloud environments
@@ -25,13 +25,17 @@ pip install gcp-logger
 
 ## Usage
 
-Basic usage:
+### Basic Usage
 
 ```python
-from gcp_logger import GCPLogger
+from gcp_logger import GCPLogger, LogEnvironment
 
-# Initialize logger
-logger = GCPLogger().logger
+# Initialize logger with explicit environment (recommended)
+logger = GCPLogger(LogEnvironment.LOCAL).logger
+
+# Or use string-based initialization
+dev_logger = GCPLogger("dev").logger     # Maps to LOCAL environment
+prod_logger = GCPLogger("prod").logger    # Maps to GCP environment
 
 # Use various log levels
 logger.debug("Debug message")
@@ -44,17 +48,47 @@ logger.alert("Alert message")
 logger.emergency("Emergency message")
 ```
 
+### Environment Configuration
+
+GCPLogger supports multiple ways to configure the logging environment:
+
+```python
+from gcp_logger import GCPLogger, LogEnvironment
+
+# 1. Using LogEnvironment enum (recommended)
+logger = GCPLogger(LogEnvironment.LOCAL).logger    # Local development
+logger = GCPLogger(LogEnvironment.GCP).logger      # Google Cloud Platform
+logger = GCPLogger(LogEnvironment.TEST).logger     # Testing environment
+
+# 2. Using string-based configuration
+logger = GCPLogger("dev").logger          # Maps to LOCAL
+logger = GCPLogger("development").logger  # Maps to LOCAL
+logger = GCPLogger("prod").logger         # Maps to GCP
+logger = GCPLogger("production").logger   # Maps to GCP
+logger = GCPLogger("staging").logger      # Maps to GCP
+logger = GCPLogger("test").logger         # Maps to TEST
+
+# 3. Using environment variable
+# ENVIRONMENT=production python your_script.py
+logger = GCPLogger().logger  # Will use environment variable or default to LOCAL
+```
+
+The environment determines the logging behavior:
+- **LOCAL/TEST**: Colorized console output for development
+- **GCP**: Structured JSON logging for Google Cloud Platform
+
 ### Framework Integration
 
 #### FastAPI Example:
 
 ```python
 from fastapi import FastAPI
-from gcp_logger import GCPLogger
+from gcp_logger import GCPLogger, LogEnvironment
 from starlette.middleware.base import BaseHTTPMiddleware
 
 app = FastAPI()
-gcp_logger = GCPLogger()
+gcp_logger = GCPLogger(LogEnvironment.LOCAL)  # For development
+# gcp_logger = GCPLogger(LogEnvironment.GCP)  # For production
 logger = gcp_logger.logger
 
 class TraceMiddleware(BaseHTTPMiddleware):
@@ -74,10 +108,11 @@ app.add_middleware(TraceMiddleware)
 
 ```python
 from flask import Flask, request
-from gcp_logger import GCPLogger
+from gcp_logger import GCPLogger, LogEnvironment
 
 app = Flask(__name__)
-gcp_logger = GCPLogger()
+gcp_logger = GCPLogger(LogEnvironment.LOCAL)  # For development
+# gcp_logger = GCPLogger("prod")              # For production (string-based)
 logger = gcp_logger.logger
 
 @app.before_request

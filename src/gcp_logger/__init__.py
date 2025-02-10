@@ -1,7 +1,7 @@
 from .custom_logger import CustomLogger
 from .formatters import CloudFormatter
 from .handlers import CloudHandler, LocalDevHandler
-from .logger import GCPLogger
+from .logger import GCPLogger, LogEnvironment
 
 __version__ = "0.3.0"
 __all__ = [
@@ -10,4 +10,5 @@ __all__ = [
     "CloudHandler",
     "LocalDevHandler",
     "CloudFormatter",
+    "LogEnvironment",
 ]

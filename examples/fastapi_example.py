@@ -2,10 +2,11 @@
 from fastapi import FastAPI, Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from gcp_logger import GCPLogger
+from gcp_logger import GCPLogger, LogEnvironment
 
-# Initialize logger
-gcp_logger = GCPLogger()
+# Initialize logger with environment enum
+# In development, use LOCAL environment for colored output
+gcp_logger = GCPLogger(LogEnvironment.LOCAL)
 logger = gcp_logger.logger
 
 
