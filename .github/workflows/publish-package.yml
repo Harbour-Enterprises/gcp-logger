@@ -83,14 +83,14 @@ jobs:
       - name: Bump up package version
         if: inputs.bump_version
         run: |
+          git config --local user.name 'github-actions[bot]'
+          git config --local user.email 'github-actions[bot]@users.noreply.github.com'
+
           bump2version ${{ inputs.version_update }}
 
       - name: Commit and push changes
         if: inputs.bump_version
         run: |
-          git config --local user.name 'github-actions[bot]'
-          git config --local user.email 'github-actions[bot]@users.noreply.github.com'
-
           # Get the new version
           NEW_VERSION=$(grep -Po '(?<=version = ")[^"]*' src/pyproject.toml)
           echo "New version: ${NEW_VERSION}"
